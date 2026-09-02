@@ -1,0 +1,262 @@
+[
+  {
+    "id": "auth-security-change",
+    "severity": "critical",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "@PreAuthorize",
+      "@Secured",
+      "@RolesAllowed",
+      "SecurityContextHolder",
+      "UserDetailsService",
+      "PasswordEncoder",
+      "BCrypt",
+      "hasRole\\(",
+      "hasAuthority\\(",
+      "permitAll\\(",
+      "authenticated\\("
+    ],
+    "reason": "인증·인가 로직이 변경됐습니다.",
+    "check": "권한 검사 조건이 약화되거나 우회 가능한 경로가 생기지 않는지 확인하세요.",
+    "reportRequired": true
+  },
+  {
+    "id": "data-deletion-change",
+    "severity": "critical",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt", "src/main/resources/**/*.sql"],
+    "contentPatterns": [
+      "\\.delete\\(",
+      "\\.deleteAll\\(",
+      "\\.deleteById\\(",
+      "\\.deleteAllById\\(",
+      "DELETE\\s+FROM",
+      "DROP\\s+TABLE",
+      "TRUNCATE"
+    ],
+    "reason": "데이터 삭제 또는 DB 스키마 제거 코드가 변경됐습니다.",
+    "check": "삭제 대상과 조건, 복구 불가 여부를 확인하세요. 소프트 딜리트가 가능한 경우 물리 삭제가 맞는지 검토하세요.",
+    "reportRequired": true
+  },
+  {
+    "id": "amount-calculation-change",
+    "severity": "critical",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "[Aa]mount",
+      "[Pp]rice",
+      "[Qq]uantity",
+      "[Ss]ettlement",
+      "[Pp]oint[^A-Z]",
+      "[Dd]iscount",
+      "[Tt]otal[Pp]rice",
+      "[Ff]ee[^A-Za-z]",
+      "[Cc]harge\\(",
+      "[Rr]efund"
+    ],
+    "reason": "금액·수량·정산 계산 관련 코드가 변경됐습니다.",
+    "check": "올림·내림·소수점 처리 방식, 오버플로 가능성, 음수 입력 처리를 확인하세요.",
+    "reportRequired": true
+  },
+  {
+    "id": "transaction-boundary-change",
+    "severity": "high",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "@Transactional",
+      "TransactionTemplate",
+      "PlatformTransactionManager",
+      "rollbackFor",
+      "propagation\\s*=",
+      "isolation\\s*=",
+      "noRollbackFor"
+    ],
+    "reason": "트랜잭션 경계가 변경됐습니다.",
+    "check": "예외 발생 시 롤백 범위와 외부 부작용(이메일 발송, 이벤트 발행 등) 처리 순서를 확인하세요.",
+    "reportRequired": true
+  },
+  {
+    "id": "lock-concurrency-change",
+    "severity": "high",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "@Lock",
+      "LockModeType",
+      "synchronized\\s",
+      "ReentrantLock",
+      "pessimisticLock",
+      "optimisticLock",
+      "AtomicInteger",
+      "AtomicLong",
+      "ConcurrentHashMap",
+      "CountDownLatch",
+      "Semaphore"
+    ],
+    "reason": "락·동시성 관련 코드가 변경됐습니다.",
+    "check": "데드락 가능성, 경쟁 조건, 락 획득 순서의 일관성을 확인하세요.",
+    "reportRequired": true
+  },
+  {
+    "id": "async-scheduler-change",
+    "severity": "high",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "@Async",
+      "@Scheduled",
+      "@EnableAsync",
+      "@EnableScheduling",
+      "ThreadPoolTaskExecutor",
+      "CompletableFuture",
+      "ExecutorService",
+      "FixedDelay",
+      "FixedRate"
+    ],
+    "reason": "비동기·스케줄러 실행 경계가 변경됐습니다.",
+    "check": "예외 처리 방식(AsyncUncaughtExceptionHandler), 트랜잭션 컨텍스트 전파, 중복 실행 방지를 확인하세요.",
+    "reportRequired": true
+  },
+  {
+    "id": "external-call-change",
+    "severity": "high",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "RestTemplate",
+      "WebClient",
+      "@FeignClient",
+      "HttpClient",
+      "exchange\\(",
+      "postForObject\\(",
+      "getForObject\\(",
+      "\\.post\\(",
+      "\\.get\\(",
+      "openFeign"
+    ],
+    "reason": "외부 시스템 호출 코드가 변경됐습니다.",
+    "check": "타임아웃 설정, 재시도 정책, 외부 호출 실패 시 트랜잭션 롤백 여부를 확인하세요.",
+    "reportRequired": true
+  },
+  {
+    "id": "public-api-contract-change",
+    "severity": "high",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "@RestController",
+      "@RequestMapping",
+      "@GetMapping",
+      "@PostMapping",
+      "@PutMapping",
+      "@DeleteMapping",
+      "@PatchMapping",
+      "@RequestBody",
+      "@ResponseBody",
+      "@ResponseStatus"
+    ],
+    "reason": "공개 API 요청·응답 계약이 변경됐습니다.",
+    "check": "기존 클라이언트와의 하위 호환성, 응답 필드 삭제·이름 변경, HTTP 상태 코드 변경 여부를 확인하세요.",
+    "reportRequired": true
+  },
+  {
+    "id": "empty-catch-block",
+    "severity": "high",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "catch\\s*\\([^)]+\\)\\s*\\{\\s*\\}",
+      "catch\\s*\\([^)]+\\)\\s*\\{\\s*//[^\n]*\\n?\\s*\\}"
+    ],
+    "reason": "빈 catch 블록 또는 예외 무시가 발견됐습니다.",
+    "check": "예외를 무시하는 것이 의도인지 확인하고, 최소한 경고 로그를 남기는지 확인하세요.",
+    "reportRequired": true
+  },
+  {
+    "id": "validation-weakened",
+    "severity": "high",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "//\\s*@Valid",
+      "//\\s*@NotNull",
+      "//\\s*@NotBlank",
+      "//\\s*@Min",
+      "//\\s*@Max",
+      "//\\s*@Pattern",
+      "//\\s*@Size"
+    ],
+    "reason": "입력 검증 애너테이션이 비활성화됐을 가능성이 있습니다.",
+    "check": "주석 처리된 검증 애너테이션이 의도적인 것인지 확인하세요.",
+    "reportRequired": true
+  },
+  {
+    "id": "secret-hardcoded",
+    "severity": "critical",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "password\\s*=\\s*\"[^\"]{4,}\"",
+      "secret\\s*=\\s*\"[^\"]{4,}\"",
+      "apiKey\\s*=\\s*\"[^\"]{4,}\"",
+      "api_key\\s*=\\s*\"[^\"]{4,}\"",
+      "token\\s*=\\s*\"[^\"]{4,}\""
+    ],
+    "reason": "비밀 정보가 코드에 직접 포함됐을 가능성이 있습니다.",
+    "check": "환경변수나 외부 설정 파일로 이동해야 하는 값인지 확인하세요.",
+    "reportRequired": true
+  },
+  {
+    "id": "migration-change",
+    "severity": "critical",
+    "filePatterns": ["src/main/resources/db/**", "src/main/resources/**/*.sql", "**/migration/**"],
+    "contentPatterns": [
+      "ALTER\\s+TABLE",
+      "DROP\\s+COLUMN",
+      "ADD\\s+COLUMN",
+      "CREATE\\s+TABLE",
+      "DROP\\s+TABLE",
+      "RENAME\\s",
+      "MODIFY\\s+COLUMN"
+    ],
+    "reason": "DB 마이그레이션 스크립트가 변경됐습니다.",
+    "check": "롤백 스크립트 존재 여부, 운영 데이터 영향 범위, 컬럼 삭제·타입 변경의 위험성을 확인하세요.",
+    "reportRequired": true
+  },
+  {
+    "id": "todo-placeholder",
+    "severity": "medium",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "\\bTODO\\b",
+      "\\bFIXME\\b",
+      "\\bHACK\\b",
+      "임시\\s",
+      "placeholder",
+      "나중에\\s",
+      "추후\\s"
+    ],
+    "reason": "TODO·임시 구현이 포함돼 있습니다.",
+    "check": "프로덕션 배포 전에 처리해야 할 항목인지 확인하세요.",
+    "reportRequired": false
+  },
+  {
+    "id": "external-call-no-timeout",
+    "severity": "medium",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "new RestTemplate\\(\\)",
+      "WebClient\\.create\\(\\)",
+      "HttpClient\\.newHttpClient\\(\\)"
+    ],
+    "reason": "타임아웃 설정 없이 외부 호출 클라이언트가 생성됐을 가능성이 있습니다.",
+    "check": "커넥션·읽기 타임아웃이 설정돼 있는지 확인하세요.",
+    "reportRequired": false
+  },
+  {
+    "id": "unlimited-query",
+    "severity": "medium",
+    "filePatterns": ["src/main/java/**/*.java", "src/main/java/**/*.kt"],
+    "contentPatterns": [
+      "\\.findAll\\(\\)",
+      "findAll\\(Sort",
+      "SELECT \\* FROM",
+      "nativeQuery.*SELECT \\*"
+    ],
+    "reason": "조건 없는 전체 조회가 포함됐을 수 있습니다.",
+    "check": "페이지네이션이나 결과 수 제한이 필요한지 확인하세요.",
+    "reportRequired": false
+  }
+]

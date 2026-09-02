@@ -1,0 +1,25 @@
+# PostgreSQL local data
+postgres_data/
+
+# Gradle
+.gradle/
+build/
+
+# Environment variables and local configuration
+.env
+.env.*
+!.env.example
+application-local.yml
+application-*.local.yml
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# macOS
+.DS_Store
+
+# claude-kit runtime marker and installer backups
+.claude/.code_changed
+*.bak
