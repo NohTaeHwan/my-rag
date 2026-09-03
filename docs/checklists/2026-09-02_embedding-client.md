@@ -95,6 +95,23 @@ claude-kit Stop Hook 자동 검수(Medium 3건, Low 2건) 중 아래 3건을 반
   - `build.gradle`에 Lombok 의존성 추가가 적절한지
   - 실제 DGX Spark 주소(`100.90.113.121:8003`)가 HTTP/2 협상 시 body 누락 문제를 보인 원인 — 서버 측(sglang/uvicorn 등) HTTP/2 처리 이슈로 추정되나 서버 로그는 확인하지 못함. 현재는 `SimpleClientHttpRequestFactory`로 HTTP/1.1을 강제해 우회함
 
+## 7. ponytail-audit 반영 (과잉구현 관점 검토 후속 조치)
+
+`/ponytail-audit`(전 저장소 대상) 결과 4건(Lombok 의존성, 테스트 중복, `EmbeddingResponse.model` 미사용 필드, `EmbeddingConfig` 헬퍼 메서드) 중 사람 판단으로 아래와 같이 처리했다.
+
+- Lombok 의존성 — **유지**. 향후 추가될 API 기능들에서도 재사용 예정이라 지금 제거하지 않기로 결정
+- `EmbeddingConfig.requestFactory()` 헬퍼 메서드 — **인라인 적용**. 호출자가 1곳뿐인데 미리 재사용을 가정해 분리해둔 것은 YAGNI이므로 `@Bean` 메서드 안으로 병합
+- `EmbeddingClientTest`의 `MockRestServiceServer` 부트스트랩 3줄 중복 — **`@BeforeEach`로 추출**. 로컬 보일러플레이트라 미래 확장과 무관하게 줄여도 손해 없음
+- `EmbeddingResponse.model` 미사용 필드 — **삭제 대신 실제로 사용하도록 검증 로직 추가**. `dimension` 불일치 검증과 동일한 패턴으로 `EmbeddingClient.embed()`에 응답 모델과 설정 모델이 다르면 `RagException`을 던지는 로직을 추가해 필드를 "쓰는 필드"로 전환. 회귀 테스트 `embed_throwsRagException_whenResponseModelMismatchesConfiguredModel` 추가
+
+**변경 파일 (추가)**
+- `src/main/java/com/nohtaehwan/rag/embedding/EmbeddingConfig.java` (헬퍼 메서드 인라인)
+- `src/main/java/com/nohtaehwan/rag/embedding/EmbeddingClient.java` (모델 불일치 검증 추가)
+- `src/test/java/com/nohtaehwan/rag/embedding/EmbeddingClientTest.java` (`@BeforeEach` 추출, 모델 불일치 테스트 추가)
+
+**검증 결과**
+- `./gradlew test` → `BUILD SUCCESSFUL`, 9 tests(`EmbeddingClientTest` 5, `EmbeddingPropertiesTest` 3, `RagBackendApplicationTests` 1), 0 failures
+
 ## 완료 조건
 
 ```text

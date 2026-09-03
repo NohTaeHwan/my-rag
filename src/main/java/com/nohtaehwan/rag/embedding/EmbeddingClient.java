@@ -31,7 +31,7 @@ public class EmbeddingClient {
      *
      * @param text Embedding을 생성할 단일 문장 (문서 Chunk 또는 사용자 질문)
      * @return BGE-M3가 생성한 dense embedding 벡터
-     * @throws RagException API 호출 실패, 응답 파싱 실패, 벡터 차원 불일치 시 발생
+     * @throws RagException API 호출 실패, 응답 파싱 실패, 응답 모델 불일치, 벡터 차원 불일치 시 발생
      */
     public List<Double> embed(String text) {
         EmbeddingResponse response;
@@ -49,6 +49,13 @@ public class EmbeddingClient {
         if (response == null || response.data() == null || response.data().isEmpty()) {
             log.warn("Embedding API 응답이 비어 있음: baseUrl={}", properties.baseUrl());
             throw new RagException("Embedding API 응답이 비어 있습니다.");
+        }
+
+        if (response.model() != null && !response.model().equals(properties.model())) {
+            log.warn("Embedding 응답 모델 불일치: expected={}, actual={}", properties.model(), response.model());
+            throw new RagException(
+                    "Embedding 응답 모델이 설정과 다릅니다. expected=%s, actual=%s"
+                            .formatted(properties.model(), response.model()));
         }
 
         List<Double> embedding = response.data().get(0).embedding();
