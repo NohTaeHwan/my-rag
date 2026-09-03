@@ -20,8 +20,8 @@ application-*.local.yml
 # macOS
 .DS_Store
 
-# claude-kit runtime marker and installer backups
-.claude/.code_changed
+# Claude Code project config (untracked entirely, kept local-only)
+.claude/
 *.bak
 
 # Hermes local plans and runtime files

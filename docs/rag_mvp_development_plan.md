@@ -152,20 +152,60 @@ set -a; source .env; set +a
 
 ### 4단계. Markdown 문서와 Chunking
 
-- [ ] 지정한 Markdown 디렉터리에서 문서 읽기
-- [ ] 제목·본문·파일 경로 추출
-- [ ] Chunk 크기와 overlap 결정
-- [ ] 너무 짧은 Chunk 제거
-- [ ] 문서와 Chunk 식별자 생성
+- [x] 지정한 Markdown 디렉터리에서 문서 읽기 — `DocumentSourceReader` (재귀 탐색, 정렬된 순서, symlink/숨김파일 제외)
+- [x] 제목·본문·파일 경로 추출 — `MarkdownParser` (첫 H1 또는 파일명 fallback, heading 계층, front matter 제외)
+- [x] Chunk 크기와 overlap 결정 — `MarkdownChunker` + `LengthMeasurer`(문자 수 근사치)
+- [x] 너무 짧은 Chunk 제거 — 빈 Chunk는 생성하지 않고, 최소 길이 미만은 같은 섹션 내 이전(없으면 다음) Chunk에 병합. 병합 결과가 targetLength를 넘으면 병합하지 않음(아래 "짧은 Chunk 처리 정책" 참고)
+- [x] 문서와 Chunk 식별자 생성 — `sourceKey`(정규화 상대경로), `chunkKey = sourceKey#index`
 
-초기 기준은 고정된 숫자를 정답으로 보지 않고, 다음 정도에서 시작한다.
+**결정된 수치와 정책 (tokenizer 의존성 없이 문자 수 근사치 사용, 실제 토큰 수 아님)**
+
+`docs/`의 실제 heading 섹션 길이(평균 150~650자, 최대 ~1700자)를 분석해 결정했다.
 
 ```text
-Chunk: 약 500~800 토큰
-Overlap: 약 50~100 토큰
+Chunk target length : 1200자 (근사치)
+Overlap              : 150자
+최소 길이            : 80자 (미만이면 같은 섹션의 이전 Chunk에 병합)
 ```
 
-문서 유형과 검색 결과를 확인하면서 조정한다.
+```yaml
+document:
+  source-directory: ${DOCUMENT_SOURCE_DIRECTORY:data/markdown}
+  chunk:
+    target-length: 1200
+    overlap-length: 150
+    min-length: 80
+```
+
+**분할 정책 (코드리뷰 반영으로 확정, 2026-09-03)**
+- heading 경계를 우선 보존한다. 섹션이 target을 넘으면 문단(빈 줄 기준) 단위로 분할한다.
+- fenced code block(``` / ~~~)은 항상 원자 단위로 취급하며, target을 초과해도 쪼개지 않는다(유일한 예외).
+- 코드 블록이 아닌 문단 하나가 그래도 target을 넘으면 문자 단위로 최후 분할한다(문장 경계 분할은 도입하지 않음 — 한국어/영어 혼용 문서에서 신뢰도 낮은 문장 경계 탐지 로직을 추가하는 대신 결정적인 문자 단위 컷을 선택).
+- **일반(코드 블록이 아닌) Chunk는 overlap을 적용한 뒤에도 항상 targetLength 이하여야 한다.** overlap을 붙였을 때 targetLength를 넘게 되면 그 overlap은 생략하고 원본 문단만 사용한다(overlap보다 길이 invariant를 우선).
+- 문자 단위로 분할된 문단은 그 안에서만 overlap이 한 번 적용되며, 이후 문단 packing 단계에서 overlap을 중복 적용하지 않는다.
+- overlap은 "직전 chunk 본문 끝에서부터 overlapLength만큼의 문자"를 의미하며, 그 구간에 포함된 줄바꿈도 그대로 포함한다.
+- heading 텍스트는 Chunk 본문에 반복 삽입하지 않고 `headingPath`로 별도 보관한다(본문 overlap과 heading 반복을 구분).
+
+**짧은 Chunk 처리 정책**
+- minLength 미만인 Chunk는 같은 section 내 이전 Chunk에 병합을 시도한다. 이전 Chunk가 없으면(섹션의 첫 Chunk인 경우) 다음 Chunk에 병합을 시도한다.
+- 병합 결과가 targetLength를 넘으면 병합하지 않고 그대로 둔다(짧더라도 targetLength invariant 우선).
+- fenced code block은 병합 대상도, 병합받는 대상도 되지 않는다(항상 원자 단위 유지).
+- 병합할 대상이 전혀 없으면(section에 Chunk가 하나뿐이면) 짧더라도 그대로 남긴다(의미 있는 정보 소실 방지).
+- 병합은 같은 section 내에서만 일어나며, 다른 heading section의 Chunk와는 섞이지 않는다.
+
+**fence(코드 블록) 판정 정책**
+- 여는 fence의 종류(backtick/tilde)와 길이를 기억한다.
+- 닫는 fence는 같은 종류이고 길이가 여는 fence 이상이어야 인정한다.
+- 닫는 fence 줄에 marker 외의 텍스트가 있으면 닫는 것으로 인정하지 않는다(여는 fence의 info string, 예: ` ```java `는 허용).
+- 문서/section 끝까지 닫히지 않은 fence는 끝까지 fence 내부로 취급한다.
+- `MarkdownParser`와 `MarkdownChunker`가 `FenceTracker` 하나를 공유해 동일한 정책을 적용한다(중복 로직 제거).
+
+**파일 수집 정책 보완**
+- `.md` 확장자 비교는 대소문자를 구분한다(`.MD`, `.Md`는 수집하지 않음) — OS의 파일시스템 대소문자 구분 여부와 무관하게 항상 동일한 결과를 내기 위함.
+- 파일 내용 맨 앞에 UTF-8 BOM이 있으면 제거한 뒤 파싱한다.
+- front matter(`---`)가 닫히지 않으면 front matter로 취급하지 않고 일반 본문으로 남긴다.
+
+문서 유형과 검색 결과를 확인하면서 조정한다. 실제 tokenizer(BGE-M3) 기준 검증은 5단계 이후 검색 품질 확인 시 별도로 진행한다.
 
 ### 5단계. 문서 색인
 
