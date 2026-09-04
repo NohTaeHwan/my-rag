@@ -1,27 +1,26 @@
 package com.nohtaehwan.rag.indexing;
 
-import java.sql.PreparedStatement;
-import java.sql.Statement;
 import java.util.List;
 
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
-import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.nohtaehwan.rag.exception.RagException;
+import com.nohtaehwan.rag.indexing.mapper.DocumentInsertParameter;
+import com.nohtaehwan.rag.indexing.mapper.DocumentMapper;
 
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * tb_document 테이블 저장과 문서 단위 재색인을 담당한다.
+ * tb_document 테이블 저장과 문서 단위 재색인을 담당한다. 실제 SQL은 {@link DocumentMapper}
+ * (MyBatis mapper, {@code @Delete}/{@code @Insert} annotation, XML 없음)가 수행한다.
  *
  * <p>{@link #reindex}는 같은 sourceKey의 기존 문서를 지우고 새로 저장하는 전체 과정을 하나의
  * 트랜잭션으로 묶는다. Service가 아니라 이 클래스(별도 Bean)에 {@code @Transactional}을 두는 이유는,
  * Service 안에서 자기 자신의 메서드를 호출하면 Spring 프록시 기반 AOP가 트랜잭션을 적용하지 못하는
  * self-invocation 문제를 피하기 위함이다. Embedding 생성(외부 API 호출)은 이 메서드 밖, Service에서
- * 먼저 끝내고, 여기서는 이미 계산된 embedding만 저장한다.
+ * 먼저 끝내고, 여기서는 이미 계산된 embedding만 저장한다. MyBatis mapper 호출도 이 메서드가 가진
+ * Spring 트랜잭션(같은 DataSource/트랜잭션 매니저)에 그대로 참여한다 — SqlSession을 직접 다루지 않는다.
  *
  * <p>커밋/롤백 범위: 삭제·insert·Chunk insert가 모두 이 메서드 하나의 트랜잭션이므로, 어느 단계에서든
  * 예외가 나면 그 문서에 대한 변경 전체가 롤백되고 기존 문서는 그대로 남는다. 문서를 여러 건 반복
@@ -43,11 +42,11 @@ import lombok.extern.slf4j.Slf4j;
 @Repository
 public class DocumentRepository {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final DocumentMapper documentMapper;
     private final DocumentChunkRepository documentChunkRepository;
 
-    public DocumentRepository(JdbcTemplate jdbcTemplate, DocumentChunkRepository documentChunkRepository) {
-        this.jdbcTemplate = jdbcTemplate;
+    public DocumentRepository(DocumentMapper documentMapper, DocumentChunkRepository documentChunkRepository) {
+        this.documentMapper = documentMapper;
         this.documentChunkRepository = documentChunkRepository;
     }
 
@@ -65,24 +64,17 @@ public class DocumentRepository {
             throw new RagException("문서 source는 비어 있을 수 없습니다.");
         }
 
-        jdbcTemplate.update("DELETE FROM tb_document WHERE source = ?", sourceKey);
+        documentMapper.deleteBySource(sourceKey);
 
-        KeyHolder keyHolder = new GeneratedKeyHolder();
-        jdbcTemplate.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(
-                    "INSERT INTO tb_document (title, source) VALUES (?, ?)",
-                    Statement.RETURN_GENERATED_KEYS);
-            ps.setString(1, title);
-            ps.setString(2, sourceKey);
-            return ps;
-        }, keyHolder);
+        DocumentInsertParameter parameter = new DocumentInsertParameter(title, sourceKey);
+        documentMapper.insert(parameter);
 
-        Number key = keyHolder.getKey();
-        if (key == null) {
+        Long documentId = parameter.getId();
+        if (documentId == null) {
             throw new RagException("문서 저장 후 생성된 id를 확인하지 못했습니다: sourceKey=" + sourceKey);
         }
 
-        documentChunkRepository.insertAll(key.longValue(), chunks);
+        documentChunkRepository.insertAll(documentId, chunks);
         log.info("문서 재색인 완료: sourceKey={}, chunkCount={}", sourceKey, chunks.size());
     }
 }

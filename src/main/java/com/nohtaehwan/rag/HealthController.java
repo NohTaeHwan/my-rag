@@ -2,22 +2,23 @@ package com.nohtaehwan.rag;
 
 import java.util.Map;
 
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import com.nohtaehwan.rag.health.mapper.HealthMapper;
 
 @RestController
 public class HealthController {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final HealthMapper healthMapper;
 
-    public HealthController(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    public HealthController(HealthMapper healthMapper) {
+        this.healthMapper = healthMapper;
     }
 
     @GetMapping("/health")
     public Map<String, String> health() {
-        jdbcTemplate.queryForObject("SELECT 1", Integer.class);
+        healthMapper.selectOne();
         return Map.of("status", "UP", "database", "UP");
     }
 }

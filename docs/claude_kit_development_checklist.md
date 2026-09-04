@@ -23,7 +23,7 @@
 
 - [ ] 기존 Controller → Service → 데이터 접근 구조를 유지했다.
 - [ ] 프로젝트의 Java·Spring Boot·Gradle 버전을 따랐다.
-- [ ] 프로젝트에서 사용하지 않는 JPA·MyBatis·WebFlux·Swagger/OpenAPI를 임의로 추가하지 않았다.
+- [ ] 프로젝트에서 사용하지 않는 JPA·MyBatis-Plus·QueryDSL·WebFlux·Swagger/OpenAPI를 임의로 추가하지 않았다. (데이터 접근은 2026-09-04부터 MyBatis)
 - [ ] 클래스·메서드 역할과 필요한 파라미터·예외 주석을 작성했다.
 - [ ] Service 레이어의 주요 흐름과 경고 로그를 작성했다.
 - [ ] 비즈니스 예외가 있으면 프로젝트의 단일 예외 체계를 사용했다.

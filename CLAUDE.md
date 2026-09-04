@@ -3,7 +3,7 @@
 ## 프로젝트
 PostgreSQL + pgvector 기반 검색 증강 생성(RAG) 백엔드 MVP
 - Java 17, Spring Boot 3.5.6
-- ORM 미사용, `JdbcTemplate` 기반 데이터 접근
+- MyBatis(mapper interface + annotation SQL, XML 미사용) 기반 데이터 접근 — 2026-09-04 stage 5-1에서 `JdbcTemplate`을 MyBatis로 마이그레이션함
 - PostgreSQL 17 + pgvector
 - 패키지 루트: `com.nohtaehwan.rag`
 
@@ -54,7 +54,7 @@ PostgreSQL + pgvector 기반 검색 증강 생성(RAG) 백엔드 MVP
 ## 프로젝트 커스텀 규칙
 
 - 빌드·테스트는 `./gradlew`를 사용한다. Java 17 환경을 기준으로 한다.
-- API는 Spring MVC + `JdbcTemplate` 구조를 사용한다. JPA, MyBatis, WebFlux를 임의로 추가하지 않는다.
+- API는 Spring MVC + MyBatis(mapper interface, `@Select`/`@Insert`/`@Delete`/`@InsertProvider` annotation SQL, XML mapper 미사용) 구조를 사용한다(2026-09-04부터, 그 이전엔 `JdbcTemplate`). JPA, MyBatis-Plus, QueryDSL, WebFlux 등 다른 영속성/비동기 프레임워크를 임의로 추가하지 않는다.
 - DB 접속 정보는 환경 변수 또는 `application.yml` 기본값을 사용하되, 자격 증명을 새 파일에 기록하지 않는다.
 - 현재 API 명세 도구는 사용하지 않는다. Swagger/OpenAPI 의존성을 임의로 추가하지 않는다.
 - DB migration은 `src/main/resources/db/migration/`에서 관리한다.

@@ -92,7 +92,7 @@ CREATE TABLE document_chunk (
 
 - [x] Spring Boot 프로젝트 생성 — Java 17, Spring Boot 3.5.6
 - [x] Web 계층 구성 — `spring-boot-starter-web`
-- [x] PostgreSQL 연결 — `spring-boot-starter-jdbc` + `JdbcTemplate`
+- [x] PostgreSQL 연결 — `spring-boot-starter-jdbc` + `JdbcTemplate` (2026-09-04 5-1단계에서 MyBatis로 마이그레이션, 아래 5-1단계 참고)
 - [x] Flyway 또는 초기 SQL로 테이블 관리 — `flyway-core`, `V1__init_rag_schema.sql`
 - [x] 환경별 설정 파일 분리 — `application.yml` (env var 기반 기본값)
 - [x] 기본 Health Check 추가 — `HealthController` (`/health`, DB 상태 포함)
@@ -240,13 +240,53 @@ POST /api/documents/index
 - 트랜잭션 경계: 문서 1건(기존 삭제 → 신규 `tb_document` insert → `tb_document_chunk` batch insert)을 하나의 트랜잭션으로 묶는다. 전체 배치를 하나의 트랜잭션으로 묶지 않는다 — 문서 A 저장 실패가 이미 성공한 다른 문서에 영향을 주지 않게 하기 위함이다. `@Transactional`은 `DocumentIndexService`가 아니라 별도 Bean인 `DocumentRepository.reindex()`에 둔다(Service가 자기 자신의 메서드를 호출하면 Spring 프록시 기반 AOP가 트랜잭션을 적용하지 못하는 self-invocation 문제 회피).
 - 재색인 정책: 같은 `source`(sourceKey)로 다시 색인하면 `DELETE FROM tb_document WHERE source = ?`로 기존 문서를 지운다. `tb_document_chunk`는 FK `ON DELETE CASCADE`로 함께 삭제되므로 별도 삭제 SQL이 필요 없다. `source`는 null/빈 문자열이면 `RagException`으로 막는다.
 - `tb_document.source` UNIQUE 제약(`V2__add_unique_constraint_to_document_source.sql`): 같은 source의 문서가 항상 최대 1건만 존재하도록 DB 레벨에서 보장한다. 같은 source로 동시에 두 재색인이 실행되면, 먼저 커밋한 트랜잭션은 성공하고 나중 트랜잭션은 insert 시점에 `unique_violation`으로 실패해 그 트랜잭션 전체가 롤백된다 — 중복 행은 생성되지 않고 나중 요청만 실패로 끝난다(별도 락은 두지 않음, MVP 범위에서 충분하다고 판단).
-- generated key 처리: `KeyHolder.getKey()`가 null이면(생성된 id를 확인 못하면) `.longValue()`로 인한 알 수 없는 NPE 대신 `RagException`을 던진다.
-- pgvector 저장: embedding은 `Double` 리스트를 `[0.1,0.2,...]` 형태의 문자열로 변환해 `?::vector`로 바인딩한다(문자열 연결이 아닌 PreparedStatement 파라미터). `tb_document_chunk`는 `JdbcTemplate.batchUpdate()`로 저장한다.
+- generated key 처리(최종 구현, 5-1단계): `DocumentMapper.insert()`에 `@Options(useGeneratedKeys = true, keyProperty = "id", keyColumn = "id")`를 붙여 생성된 id를 `DocumentInsertParameter.id`에 채운다. `getId()`가 null이면(생성된 id를 확인 못하면) 알 수 없는 NPE 대신 `RagException`을 던진다.
+- pgvector 저장: embedding은 `Double` 리스트를 `[0.1,0.2,...]` 형태의 문자열로 변환해 `?::vector`로 바인딩한다(문자열 연결이 아닌 파라미터 바인딩). 저장은 5단계 당시 `JdbcTemplate.batchUpdate()`였으나, 5-1단계에서 MyBatis mapper의 `@InsertProvider`(`DocumentChunkSqlProvider`가 순수 Java로 만드는 multi-row INSERT)로 교체됐다(아래 5-1단계 참고).
 - 예외 처리: 전역 예외 처리기가 없어 `DocumentIndexController`에 `@ExceptionHandler(RagException.class)`와 `@ExceptionHandler(DataAccessException.class)`를 최소로 추가했다. 둘 다 응답은 동일하게 `{"message": "문서 색인에 실패했습니다."}`이며, DB URL·SQL·문서 내용·embedding 벡터는 응답에 노출하지 않고 로그에만 남긴다. 그 외 RuntimeException은 가로채지 않는다(무분별한 예외 은폐 금지).
 - 부분 성공(partial success) 정책: 색인은 문서 단위로 commit된다. 뒤에 오는 문서가 실패해도 앞서 이미 commit된 문서는 롤백되지 않는다. Embedding 생성이 실패한 문서는 저장 자체가 시도되지 않는다(`DocumentRepository.reindex()` 호출 전에 예외 발생). API 응답은 성공/실패 둘 중 하나지만, 실패 응답에도 내부적으로는 일부 문서가 이미 새로 저장된 상태로 남을 수 있다 — 어디까지 처리됐는지는 서버 로그(sourceKey 기준)로 확인한다.
 - 빈 Markdown 문서 정책: Chunk가 0개인 문서도 색인 대상에서 제외하지 않는다. `tb_document` 행은 저장하고(`documentCount`에 포함), `tb_document_chunk`는 저장하지 않는다(`chunkCount`에는 미포함). 검색 단계에서는 Chunk가 없으므로 결과에 나타나지 않는다. MVP 단순성을 위한 의도된 동작이다.
-- rollback 실제 검증 범위: Spring `@Transactional`의 rollback 자체(런타임 예외 시 롤백)는 프레임워크가 보장하는 동작이라 별도로 재검증하지 않았다. 대신 애플리케이션 코드가 DB 예외를 catch해서 삼키지 않고 그대로 전파하는지는 unit test(`DocumentRepositoryTest`)로 확인했다. 실제 PostgreSQL에 대한 rollback/pgvector 저장 통합 테스트(Testcontainers 등)는 이번 범위에서 추가하지 않았다 — 이유는 아래 "테스트 공백" 참고.
-- **테스트 공백(의도적으로 남김)**: 실제 rollback 여부, `vector(1024)` 컬럼 저장, 재색인 후 이전 Chunk cascade 삭제를 실제 PostgreSQL로 검증하는 통합 테스트는 없다. Testcontainers 도입은 이번 작업의 직접 범위를 넘어선다고 판단해 추가하지 않았다(기존 stage 5 지침도 "no Testcontainers"였음). 대신 로컬에서 `docker compose`로 띄운 실제 Postgres(`rag-postgres` 컨테이너)에 V2 migration을 적용해 마이그레이션 자체가 성공하는지, UNIQUE 제약이 실제로 생성되는지는 수동으로 확인했다(`docs/checklists/2026-09-04_document-indexing.md` 참고). 추후 통합 테스트가 필요하면 `@Tag("integration")` + Testcontainers로 별도 소스셋 분리를 권장한다.
+- rollback 검증 상태:
+  - **5단계 당시**: Spring `@Transactional`의 rollback 자체(런타임 예외 시 롤백)는 프레임워크가 보장하는 동작이라 별도로 재검증하지 않았다. 애플리케이션 코드가 DB 예외를 catch해서 삼키지 않고 그대로 전파하는지만 unit test(`DocumentRepositoryTest`)로 확인했다. 실제 rollback 여부, `vector(1024)` 컬럼 저장, 재색인 후 이전 Chunk cascade 삭제를 실제 PostgreSQL로 검증하는 통합 테스트는 없었다(테스트 공백으로 남김).
+  - **5-1단계**: 로컬 `rag-postgres` 컨테이너가 기동된 상태를 활용해 `DocumentPersistenceIntegrationTest`를 추가하고, 실제 PostgreSQL에서 위 항목(rollback, pgvector 저장, cascade 삭제)을 전부 검증 완료했다. 아래 5-1단계 참고.
+
+### 5-1단계. MyBatis 마이그레이션
+
+- [x] MyBatis 의존성/설정 추가
+- [x] `DocumentRepository`/`DocumentChunkRepository`/`HealthController`의 `JdbcTemplate` 사용을 MyBatis mapper로 교체
+- [x] 실제 PostgreSQL 통합 테스트 추가
+
+5단계에서 `JdbcTemplate`로 구현했던 DB 접근 코드를 MyBatis로 교체했다. API 동작·트랜잭션 경계·pgvector 저장 방식·재색인 정책은 그대로 유지하고, 데이터 접근 계층만 교체하는 작업이다.
+
+**패키지 구조**
+
+```text
+indexing/mapper/DocumentMapper.java, DocumentChunkMapper.java, DocumentChunkSqlProvider.java, DocumentInsertParameter.java, ChunkRow.java
+health/mapper/HealthMapper.java
+```
+
+`HealthController`는 기존 위치(`com.nohtaehwan.rag`)를 유지하고, mapper만 `health.mapper` 하위에 둔다. mapper 등록은 `@Mapper` annotation 방식(인터페이스마다 직접 부여)을 사용하고 `@MapperScan`은 쓰지 않는다 — `RagBackendApplication.java`를 건드리지 않기 위함이다.
+
+**의존성**: `org.mybatis.spring.boot:mybatis-spring-boot-starter:3.0.4`. 이 라이브러리 자체는 Spring Boot 3.4.0 기준으로 빌드됐지만(POM 확인), 우리 프로젝트의 `io.spring.dependency-management`가 전이 의존성(`spring-boot-starter-jdbc` 등)을 3.5.6으로 강제 정렬해 충돌 없이 resolve된다(`./gradlew dependencies --configuration runtimeClasspath`로 확인).
+
+**SQL 작성 방식(XML 미사용)**: 처음엔 XML mapper(`mapper/*.xml`)로 구현했으나, 사용자 요청으로 JPA `@Query`에 가까운 annotation 방식으로 바꿨다. `DocumentMapper`/`HealthMapper`는 `@Delete`/`@Insert`/`@Select`로 SQL을 메서드 위에 직접 적는다. `application.yml`의 `mybatis.mapper-locations` 설정도 XML이 없어져서 제거했다.
+
+**generated key 처리**: `@Options(useGeneratedKeys = true, keyProperty = "id", keyColumn = "id")`를 `insert()` 메서드에 붙인다. insert 파라미터는 record가 아니라 일반 클래스(`DocumentInsertParameter`)다 — MyBatis가 생성된 id를 다시 채워 넣으려면 setter가 있는 mutable 객체여야 하기 때문이다(Lombok `@Getter`/`@Setter`/`@RequiredArgsConstructor`로 보일러플레이트 축소). id가 채워지지 않으면(`getId() == null`) 5단계와 동일하게 `RagException`을 던진다(NPE 노출 방지).
+
+**Chunk batch insert 방식**: 문서마다 chunk 개수가 달라 정적 `@Insert` 문자열로는 표현이 안 된다. `ExecutorType.BATCH`(수동 `SqlSession` 필요)도 쓰지 않고, `@InsertProvider(type = DocumentChunkSqlProvider.class, method = "insertAll")`로 순수 Java 메서드가 `INSERT ... VALUES (...), (...), ...` SQL 문자열을 만든다. `chunks[i].content`처럼 MyBatis의 리스트 인덱스 파라미터 접근으로 각 행의 실제 값은 여전히 `#{...}` 바인딩이다(Provider는 SQL 텍스트의 자리표시자 개수만 만들 뿐, 실제 값을 문자열로 연결하지 않는다 — SQL Injection 위험 없음). `?::vector` 캐스팅도 `#{chunks[i].embeddingLiteral}::vector`로 그대로 파라미터 표현식에 건다.
+
+**HealthController 예외 경로 변화**: 이전에는 `JdbcTemplate`이 던지는 예외가 그대로 전파됐다. MyBatis도 `SqlSessionTemplate`이 내부적으로 예외를 Spring `DataAccessException` 계열로 변환해서 던지므로, 예외 계층은 동일하게 유지된다. `HealthController`는 여전히 아무 예외 처리도 하지 않는다(전역 예외 처리기로 확장하지 않음, 관찰된 동작만 `HealthControllerTest`에 문서화).
+
+**실제 PostgreSQL 통합 테스트(`DocumentPersistenceIntegrationTest`)**: 로컬 `rag-postgres`(pgvector) 컨테이너가 이미 떠 있어서 Testcontainers 없이 기존 관례(`RagBackendApplicationTests`처럼 DB 없으면 그대로 실패)를 따라 작성했다. 검증 내용:
+1. 문서+Chunk 저장, 생성된 id로 조회
+2. `vector_dims(embedding) = 1024` 확인(pgvector 실제 저장)
+3. 같은 source 재색인 시 문서 교체 + 이전 Chunk가 `ON DELETE CASCADE`로 실제 삭제됨
+4. `vector(1024)` 컬럼에 차원이 다른 벡터를 넣어 **실제 DB 오류**를 유발 → `DocumentRepository.reindex()`가 롤백되어 이전 문서가 그대로 남음(mock이 아닌 실제 rollback 검증)
+5. `HealthMapper.selectOne() == 1`
+6. 다른 source 문서는 영향받지 않음
+
+**JdbcTemplate 제거 확인**: `src/main/java` 전체에서 `JdbcTemplate`/`NamedParameterJdbcTemplate`/`JdbcOperations` 참조 0건(재검색으로 확인). `src/test/java`에는 `DocumentPersistenceIntegrationTest`에서만 테스트 셋업/검증 전용으로 남아 있다(애플리케이션 코드 아님).
+
+**변경하지 않은 것**: `V1`/`V2` Flyway migration, `tb_document`/`tb_document_chunk` 스키마, source UNIQUE 정책, 부분 성공 정책, embedding 정책, 검색/LLM 기능 — 전부 5단계 그대로.
 
 ### 6단계. 유사도 검색
 

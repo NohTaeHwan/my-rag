@@ -15,7 +15,7 @@ Markdown 문서를 넣고, 질문에 관련된 Chunk와 출처를 결과값으�
 |---|---|
 | Language | Java 17 |
 | Framework | Spring Boot 3.5.6 (Spring MVC) |
-| Data Access | `JdbcTemplate` (ORM 미사용) |
+| Data Access | MyBatis (mapper interface + annotation SQL, XML 미사용, ORM 미사용) |
 | Database | PostgreSQL 17 + pgvector |
 | Migration | Flyway |
 | Embedding | BGE-M3 (OpenAI 호환 `/v1/embeddings` API) |
@@ -81,7 +81,9 @@ set -a; source .env; set +a
 ```text
 com.nohtaehwan.rag
 ├─ RagBackendApplication.java   # 엔트리 포인트
-├─ HealthController.java        # 헬스체크
+├─ HealthController.java        # 헬스체크 (HealthMapper 사용)
+├─ health/mapper/
+│   └─ HealthMapper.java        # @Select("SELECT 1")
 ├─ document/                    # Markdown 수집·파싱·Chunking
 │   ├─ DocumentSourceReader.java
 │   ├─ MarkdownParser.java
@@ -98,10 +100,18 @@ com.nohtaehwan.rag
 │   ├─ DocumentIndexService.java
 │   ├─ DocumentIndexResponse.java
 │   ├─ DocumentRepository.java
-│   └─ DocumentChunkRepository.java
+│   ├─ DocumentChunkRepository.java
+│   └─ mapper/                  # MyBatis mapper interface, SQL은 annotation에 직접 작성(XML 없음)
+│       ├─ DocumentMapper.java          # @Delete/@Insert
+│       ├─ DocumentChunkMapper.java     # @InsertProvider
+│       ├─ DocumentChunkSqlProvider.java # insertAll의 multi-row INSERT SQL을 순수 Java로 생성
+│       ├─ DocumentInsertParameter.java
+│       └─ ChunkRow.java
 └─ exception/
     └─ RagException.java        # 프로젝트 단일 비즈니스 예외
 ```
+
+MyBatis mapper는 XML을 쓰지 않고 인터페이스 메서드 위에 SQL을 직접 붙이는 annotation 방식(`@Select`/`@Insert`/`@Delete`)입니다. 문서 수만큼 늘어나는 chunk batch insert처럼 정적 SQL로 표현이 안 되는 경우만 `@InsertProvider` + SQL을 만드는 순수 Java 클래스(`DocumentChunkSqlProvider`)를 씁니다.
 
 Retrieval(pgvector 검색), Answer(LLM 호출) 모듈은 아직 구현되지 않았습니다. 진행 상황은 [`docs/rag_mvp_development_plan.md`](docs/rag_mvp_development_plan.md)에서 단계별로 확인할 수 있습니다.
 
