@@ -209,33 +209,44 @@ document:
 
 ### 5단계. 문서 색인
 
-- [ ] Markdown 파일 선택
-- [ ] 문서 레코드 저장
-- [ ] Chunk 생성
-- [ ] Chunk별 BGE-M3 Embedding 생성
-- [ ] Chunk와 벡터 저장
-- [ ] 색인 결과 수 반환
-
-첫 API는 단순하게 만든다.
+- [x] Markdown 파일 선택
+- [x] 문서 레코드 저장
+- [x] Chunk 생성
+- [x] Chunk별 BGE-M3 Embedding 생성
+- [x] Chunk와 벡터 저장
+- [x] 색인 결과 수 반환
 
 ```text
 POST /api/documents/index
 ```
 
+요청 본문은 없다. 대상 파일이 하나도 없어도 오류가 아니라 0건 성공으로 처리한다.
+
 응답 예시:
 
 ```json
 {
-  "documentId": 1,
+  "documentCount": 2,
   "chunkCount": 8,
   "embeddingDimension": 1024
 }
 ```
 
-**설계 유의사항 (3단계 EmbeddingClient 검수 중 발견, 5단계 구현 시 반영)**
+**확정된 설계 (5단계 구현 반영)**
 
-- 재시도 정책: 현재 `EmbeddingClient.embed()`는 재시도 없이 1회 호출 실패 시 바로 예외를 전파한다. 3단계(단일 문장 호출)에서는 의도된 설계이지만, 5단계에서 Chunk 여러 개를 반복 호출하면 일시적 네트워크 오류로 색인 전체가 실패할 수 있다. 색인 API에서 Chunk 단위 재시도 또는 실패 Chunk만 별도 처리하는 정책을 검토한다.
-- 트랜잭션 경계: "Embedding 생성 → PostgreSQL 저장"을 하나의 트랜잭션으로 묶을 경우, 외부 API 호출(embed)을 트랜잭션 내부에 두면 트랜잭션 유지 시간이 길어진다. Embedding 생성은 트랜잭션 밖에서 먼저 수행하고, DB 저장만 트랜잭션으로 묶는 방식을 우선 검토한다.
+- 패키지: `com.nohtaehwan.rag.indexing` — `DocumentIndexController` / `DocumentIndexService` / `DocumentIndexResponse` / `DocumentRepository` / `DocumentChunkRepository` / (패키지 전용) `EmbeddedChunk`.
+- 처리 흐름: `DocumentSourceReader.readAll()` → 파일별 `MarkdownParser.parse()` → `MarkdownChunker.chunk()` → Chunk별 `EmbeddingClient.embed()` 순차 호출(트랜잭션 밖) → `DocumentRepository.reindex(title, sourceKey, chunks)`(문서 단위 트랜잭션) → 집계 후 응답.
+- 재시도 정책: 재시도를 추가하지 않는다. `EmbeddingClient.embed()`가 1회 실패하면 즉시 예외를 전파하고(fail-fast) 색인 전체를 중단한다. 이미 저장된 이전 문서는 유지된다(문서 단위 트랜잭션이 각각 커밋되어 있으므로).
+- 트랜잭션 경계: 문서 1건(기존 삭제 → 신규 `tb_document` insert → `tb_document_chunk` batch insert)을 하나의 트랜잭션으로 묶는다. 전체 배치를 하나의 트랜잭션으로 묶지 않는다 — 문서 A 저장 실패가 이미 성공한 다른 문서에 영향을 주지 않게 하기 위함이다. `@Transactional`은 `DocumentIndexService`가 아니라 별도 Bean인 `DocumentRepository.reindex()`에 둔다(Service가 자기 자신의 메서드를 호출하면 Spring 프록시 기반 AOP가 트랜잭션을 적용하지 못하는 self-invocation 문제 회피).
+- 재색인 정책: 같은 `source`(sourceKey)로 다시 색인하면 `DELETE FROM tb_document WHERE source = ?`로 기존 문서를 지운다. `tb_document_chunk`는 FK `ON DELETE CASCADE`로 함께 삭제되므로 별도 삭제 SQL이 필요 없다. `source`는 null/빈 문자열이면 `RagException`으로 막는다.
+- `tb_document.source` UNIQUE 제약(`V2__add_unique_constraint_to_document_source.sql`): 같은 source의 문서가 항상 최대 1건만 존재하도록 DB 레벨에서 보장한다. 같은 source로 동시에 두 재색인이 실행되면, 먼저 커밋한 트랜잭션은 성공하고 나중 트랜잭션은 insert 시점에 `unique_violation`으로 실패해 그 트랜잭션 전체가 롤백된다 — 중복 행은 생성되지 않고 나중 요청만 실패로 끝난다(별도 락은 두지 않음, MVP 범위에서 충분하다고 판단).
+- generated key 처리: `KeyHolder.getKey()`가 null이면(생성된 id를 확인 못하면) `.longValue()`로 인한 알 수 없는 NPE 대신 `RagException`을 던진다.
+- pgvector 저장: embedding은 `Double` 리스트를 `[0.1,0.2,...]` 형태의 문자열로 변환해 `?::vector`로 바인딩한다(문자열 연결이 아닌 PreparedStatement 파라미터). `tb_document_chunk`는 `JdbcTemplate.batchUpdate()`로 저장한다.
+- 예외 처리: 전역 예외 처리기가 없어 `DocumentIndexController`에 `@ExceptionHandler(RagException.class)`와 `@ExceptionHandler(DataAccessException.class)`를 최소로 추가했다. 둘 다 응답은 동일하게 `{"message": "문서 색인에 실패했습니다."}`이며, DB URL·SQL·문서 내용·embedding 벡터는 응답에 노출하지 않고 로그에만 남긴다. 그 외 RuntimeException은 가로채지 않는다(무분별한 예외 은폐 금지).
+- 부분 성공(partial success) 정책: 색인은 문서 단위로 commit된다. 뒤에 오는 문서가 실패해도 앞서 이미 commit된 문서는 롤백되지 않는다. Embedding 생성이 실패한 문서는 저장 자체가 시도되지 않는다(`DocumentRepository.reindex()` 호출 전에 예외 발생). API 응답은 성공/실패 둘 중 하나지만, 실패 응답에도 내부적으로는 일부 문서가 이미 새로 저장된 상태로 남을 수 있다 — 어디까지 처리됐는지는 서버 로그(sourceKey 기준)로 확인한다.
+- 빈 Markdown 문서 정책: Chunk가 0개인 문서도 색인 대상에서 제외하지 않는다. `tb_document` 행은 저장하고(`documentCount`에 포함), `tb_document_chunk`는 저장하지 않는다(`chunkCount`에는 미포함). 검색 단계에서는 Chunk가 없으므로 결과에 나타나지 않는다. MVP 단순성을 위한 의도된 동작이다.
+- rollback 실제 검증 범위: Spring `@Transactional`의 rollback 자체(런타임 예외 시 롤백)는 프레임워크가 보장하는 동작이라 별도로 재검증하지 않았다. 대신 애플리케이션 코드가 DB 예외를 catch해서 삼키지 않고 그대로 전파하는지는 unit test(`DocumentRepositoryTest`)로 확인했다. 실제 PostgreSQL에 대한 rollback/pgvector 저장 통합 테스트(Testcontainers 등)는 이번 범위에서 추가하지 않았다 — 이유는 아래 "테스트 공백" 참고.
+- **테스트 공백(의도적으로 남김)**: 실제 rollback 여부, `vector(1024)` 컬럼 저장, 재색인 후 이전 Chunk cascade 삭제를 실제 PostgreSQL로 검증하는 통합 테스트는 없다. Testcontainers 도입은 이번 작업의 직접 범위를 넘어선다고 판단해 추가하지 않았다(기존 stage 5 지침도 "no Testcontainers"였음). 대신 로컬에서 `docker compose`로 띄운 실제 Postgres(`rag-postgres` 컨테이너)에 V2 migration을 적용해 마이그레이션 자체가 성공하는지, UNIQUE 제약이 실제로 생성되는지는 수동으로 확인했다(`docs/checklists/2026-09-04_document-indexing.md` 참고). 추후 통합 테스트가 필요하면 `@Tag("integration")` + Testcontainers로 별도 소스셋 분리를 권장한다.
 
 ### 6단계. 유사도 검색
 

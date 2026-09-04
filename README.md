@@ -82,25 +82,48 @@ set -a; source .env; set +a
 com.nohtaehwan.rag
 ├─ RagBackendApplication.java   # 엔트리 포인트
 ├─ HealthController.java        # 헬스체크
+├─ document/                    # Markdown 수집·파싱·Chunking
+│   ├─ DocumentSourceReader.java
+│   ├─ MarkdownParser.java
+│   ├─ MarkdownChunker.java
+│   └─ ...
 ├─ embedding/                   # BGE-M3 Embedding API 연동
 │   ├─ EmbeddingClient.java
 │   ├─ EmbeddingConfig.java
 │   ├─ EmbeddingProperties.java
 │   ├─ EmbeddingRequest.java
 │   └─ EmbeddingResponse.java
+├─ indexing/                    # 문서 색인(Chunk+Embedding → PostgreSQL 저장)
+│   ├─ DocumentIndexController.java
+│   ├─ DocumentIndexService.java
+│   ├─ DocumentIndexResponse.java
+│   ├─ DocumentRepository.java
+│   └─ DocumentChunkRepository.java
 └─ exception/
     └─ RagException.java        # 프로젝트 단일 비즈니스 예외
 ```
 
-Document(문서/Chunk 관리), Retrieval(pgvector 검색), Answer(LLM 호출) 모듈은 아직 구현되지 않았습니다. 진행 상황은 [`docs/rag_mvp_development_plan.md`](docs/rag_mvp_development_plan.md)에서 단계별로 확인할 수 있습니다.
+Retrieval(pgvector 검색), Answer(LLM 호출) 모듈은 아직 구현되지 않았습니다. 진행 상황은 [`docs/rag_mvp_development_plan.md`](docs/rag_mvp_development_plan.md)에서 단계별로 확인할 수 있습니다.
 
 ## API 목록
 
-_last update: 2026-09-02_
+_last update: 2026-09-04_
 
 | Method | Path | 설명 |
 |---|---|---|
 | GET | `/health` | 애플리케이션·DB 상태 확인 |
+| POST | `/api/documents/index` | Markdown 문서 Chunking·Embedding 후 색인(재색인 시 기존 문서 대체) |
+
+**`POST /api/documents/index` 정책**
+
+- 설정된 디렉터리(`document.source-directory`)의 `.md` 파일 전체를 색인한다. 요청 본문은 없다.
+- 대상 파일이 없으면 오류가 아니라 0건 성공으로 응답한다.
+- 같은 `source`로 재색인하면 기존 문서를 대체한다. `tb_document.source`는 UNIQUE 제약이 있어 같은 source의 문서는 항상 최대 1건이다.
+- Embedding 생성은 DB 트랜잭션 밖에서 순차 수행한다(재시도 없음, 실패 시 즉시 중단).
+- 문서 삭제·insert·Chunk insert는 문서 1건 단위의 하나의 트랜잭션이다.
+- 여러 문서 중 뒤의 문서가 실패해도 앞서 이미 저장(commit)된 문서는 유지된다(부분 성공 허용).
+- Chunk가 0개인 빈 문서도 문서 수(`documentCount`)에는 포함하고 Chunk 수(`chunkCount`)에는 포함하지 않는다.
+- 실패 응답은 DB·Embedding API 상세 원인을 노출하지 않고 `{"message": "문서 색인에 실패했습니다."}`만 반환한다.
 
 ## 참고 문서
 
