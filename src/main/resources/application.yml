@@ -4,7 +4,7 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:postgresql://127.0.0.1:5432/rag_db}
     username: ${DB_USERNAME:rag}
-    password: ${DB_PASSWORD:rag_dev_password}
+    password: ${DB_PASSWORD}
   flyway:
     locations: classpath:db/migration
     baseline-on-migrate: true
