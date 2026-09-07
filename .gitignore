@@ -1,6 +1,9 @@
 # PostgreSQL local data
 postgres_data/
 
+# 색인 대상 Markdown 문서 (사용자별 로컬 데이터, 협업 공유 대상 아님)
+data/
+
 # Gradle
 .gradle/
 build/
