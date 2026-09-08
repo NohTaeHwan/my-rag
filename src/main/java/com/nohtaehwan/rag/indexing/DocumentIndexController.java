@@ -12,6 +12,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.nohtaehwan.rag.exception.RagException;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -20,6 +23,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @RestController
 @RequestMapping("/api/documents")
+@Tag(name = "문서 색인", description = "Markdown 문서 색인 API")
 public class DocumentIndexController {
 
     private final DocumentIndexService documentIndexService;
@@ -28,6 +32,9 @@ public class DocumentIndexController {
         this.documentIndexService = documentIndexService;
     }
 
+    @Operation(summary = "문서 색인 실행", description = "설정된 Markdown 디렉터리의 문서를 색인한다. 요청 본문·파라미터는 없다.")
+    @ApiResponse(responseCode = "200", description = "문서 색인 성공")
+    @ApiResponse(responseCode = "500", description = "문서 색인 실패")
     @PostMapping("/index")
     public DocumentIndexResponse index() {
         return documentIndexService.indexDocuments();

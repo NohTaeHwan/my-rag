@@ -32,3 +32,11 @@ mybatis:
 
 retrieval:
   top-k: ${RETRIEVAL_TOP_K:5}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs

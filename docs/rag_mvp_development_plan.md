@@ -350,6 +350,27 @@ GET /api/search?query=결제 취소 방법
 질문 → 관련 Chunk 검색 → 출처 확인
 ```
 
+### 6-1단계. Swagger(OpenAPI) 환경 구성
+
+- [x] Springdoc OpenAPI 3 + Swagger UI 의존성 추가
+- [x] `OpenAPI`/`GroupedOpenApi` Bean 구성
+- [x] 기존 API 2개(`POST /api/documents/index`, `GET /api/search`)에 OpenAPI annotation 추가
+- [x] `/health`를 Swagger 문서에서 제외
+- [x] OpenAPI JSON·Swagger UI 실제 접속 확인
+
+`/Users/nohtaehwan/dev/hehe/hehe`의 기존 Springdoc 구성(`SwaggerConfig.java`, `build.gradle`, `application.yml`)을 참고하되, `my-rag`에는 Spring Security·JWT 인증이 없어 Security Scheme은 추가하지 않았다. API가 2개뿐이라 `GroupedOpenApi`도 `/api/**` 전체 그룹 하나만 구성했다(hehe처럼 도메인별로 쪼개지 않음).
+
+**확정된 설계**
+
+- 신규 패키지: `com.nohtaehwan.rag.config` — `SwaggerConfig`(`@Configuration`, `OpenAPI` Bean + `GroupedOpenApi` Bean 1개).
+- 의존성: `org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.0`(`hehe` 참고 구성과 동일 버전, Maven Central에 실재함을 확인).
+- 접속 경로: Swagger UI `/swagger-ui.html`(→ `/swagger-ui/index.html`로 302 redirect), OpenAPI JSON `/v3/api-docs`. `application.yml`에 `springdoc.swagger-ui.path`/`tags-sorter`/`operations-sorter`/`springdoc.api-docs.path` 추가.
+- `OpenAPI` Bean: title `my-rag API`, version `v1.0.0`, description은 현재 MVP 범위(색인+검색)만 설명. 인증 Scheme·존재하지 않는 Answer API는 문서에 추가하지 않았다.
+- Controller에는 `@Tag`/`@Operation`/`@ApiResponse`/`@Parameter`만 추가했다 — method signature·return type·예외 처리·HTTP status는 전혀 바꾸지 않았다(순수 metadata annotation). `HealthController`에는 `@Hidden`을 붙여 Swagger 문서에서 제외했다(API 자체 동작은 그대로).
+- 기존 `HealthControllerTest`/`DocumentIndexControllerTest`/`SearchControllerTest`는 코드 수정 없이 그대로 통과함을 확인했다(annotation 추가가 런타임 동작에 영향 없음을 실증).
+- 신규 테스트: `SwaggerConfigTest`(Bean 등록 확인), `SwaggerDocumentationTest`(`/v3/api-docs` JSON의 title·version·대상 path·`query` parameter·200/400/500 response·`SearchResponse`/`SearchResult`/`DocumentIndexResponse` record 필드가 전부 포함되고 `/health`는 없음을 확인). Java record가 Springdoc/Jackson으로 별도 annotation 없이 정상 스키마 생성됨을 실제 JSON으로 확인했다.
+- 실제 실행 검증: `./gradlew bootRun` 후 `curl`로 `GET /v3/api-docs`(200, title/version/paths 확인), `GET /swagger-ui.html`(302 → `/swagger-ui/index.html`), `GET /swagger-ui/index.html`(200) 전부 실제로 확인했다.
+
 ### 7단계. LLM 답변 생성
 
 검색 결과가 정상적으로 나오는 것을 확인한 뒤 LLM을 연결한다.

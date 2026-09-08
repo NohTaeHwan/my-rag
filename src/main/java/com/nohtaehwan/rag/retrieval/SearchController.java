@@ -13,6 +13,10 @@ import org.springframework.web.bind.annotation.RestController;
 import com.nohtaehwan.rag.exception.InvalidRequestException;
 import com.nohtaehwan.rag.exception.RagException;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -20,6 +24,7 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @RestController
+@Tag(name = "검색", description = "질문 embedding 기반 유사도 검색 API")
 public class SearchController {
 
     private final SearchService searchService;
@@ -28,8 +33,13 @@ public class SearchController {
         this.searchService = searchService;
     }
 
+    @Operation(summary = "유사도 검색", description = "질문과 관련된 Chunk를 cosine distance 기준으로 검색한다.")
+    @ApiResponse(responseCode = "200", description = "검색 성공")
+    @ApiResponse(responseCode = "400", description = "query가 없거나 비어 있음")
+    @ApiResponse(responseCode = "500", description = "Embedding 또는 DB 검색 실패")
     @GetMapping("/api/search")
-    public SearchResponse search(@RequestParam String query) {
+    public SearchResponse search(
+            @Parameter(description = "검색 질문", example = "결제 취소 방법", required = true) @RequestParam String query) {
         return searchService.search(query);
     }
 

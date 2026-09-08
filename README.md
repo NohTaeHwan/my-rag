@@ -19,6 +19,7 @@ Markdown 문서를 넣고, 질문에 관련된 Chunk와 출처를 결과값으�
 | Database | PostgreSQL 17 + pgvector |
 | Migration | Flyway |
 | Embedding | BGE-M3 (OpenAI 호환 `/v1/embeddings` API) |
+| API 문서 | Springdoc OpenAPI 3 + Swagger UI |
 | Build | Gradle (`./gradlew`) |
 
 ## 시작하기
@@ -77,12 +78,25 @@ set -a; source .env; set +a
 ./gradlew test
 ```
 
+### 6. API 문서 (Swagger UI)
+
+```bash
+./gradlew bootRun
+```
+
+- Swagger UI: http://localhost:8080/swagger-ui.html
+- OpenAPI JSON: http://localhost:8080/v3/api-docs
+
+`POST /api/documents/index`, `GET /api/search`만 문서화 대상이며, 운영 상태 확인용 `GET /health`는 `@Hidden`으로 Swagger 문서에서 제외됩니다(API 자체는 그대로 동작).
+
 ## 프로젝트 구조
 
 ```text
 com.nohtaehwan.rag
 ├─ RagBackendApplication.java   # 엔트리 포인트
-├─ HealthController.java        # 헬스체크 (HealthMapper 사용)
+├─ HealthController.java        # 헬스체크 (HealthMapper 사용, Swagger 문서에서는 @Hidden)
+├─ config/
+│   └─ SwaggerConfig.java       # OpenAPI/Swagger UI 설정
 ├─ health/mapper/
 │   └─ HealthMapper.java        # @Select("SELECT 1")
 ├─ document/                    # Markdown 수집·파싱·Chunking
