@@ -19,6 +19,7 @@ Markdown 문서를 넣고, 질문에 관련된 Chunk와 출처를 결과값으�
 | Database | PostgreSQL 17 + pgvector |
 | Migration | Flyway |
 | Embedding | BGE-M3 (OpenAI 호환 `/v1/embeddings` API) |
+| LLM | OpenAI-compatible `/chat/completions` API (특정 provider SDK 미사용) |
 | API 문서 | Springdoc OpenAPI 3 + Swagger UI |
 | Build | Gradle (`./gradlew`) |
 
@@ -63,8 +64,14 @@ set -a; source .env; set +a
 | `EMBEDDING_MODEL` | 아니오 | `BAAI/bge-m3` | Embedding 모델명 |
 | `EMBEDDING_DIMENSION` | 아니오 | `1024` | 기대하는 벡터 차원 |
 | `RETRIEVAL_TOP_K` | 아니오 | `5` | 검색 API가 반환할 최대 결과 수 (1~50) |
+| `LLM_BASE_URL` | **예** | `http://127.0.0.1:8001/v1` | OpenAI-compatible LLM API base URL (`/v1` 포함) |
+| `LLM_MODEL` | 아니오 | `local-model` | 사용할 LLM 모델 id |
+| `LLM_API_KEY` | 아니오 | (빈 문자열) | LLM API Key. 있으면 `Authorization: Bearer` 헤더로 전송, 없으면 헤더 생략 |
+| `LLM_MAX_CONTEXT_CHARS` | 아니오 | `12000` | LLM prompt에 넣을 검색 근거의 최대 문자 수 |
+| `LLM_MAX_TOKENS` | 아니오 | `512` | LLM 응답의 최대 토큰 수 |
+| `LLM_TEMPERATURE` | 아니오 | `0.0` | LLM 샘플링 temperature (0~2) |
 
-`EMBEDDING_BASE_URL`은 로컬 더미 값이라 실제 Embedding 서버를 쓰려면 반드시 채워야 합니다. `DB_PASSWORD`는 기본값이 없어 설정하지 않으면 애플리케이션이 기동하지 않습니다.
+`EMBEDDING_BASE_URL`/`LLM_BASE_URL`은 로컬 더미 값이라 실제 서버를 쓰려면 반드시 채워야 합니다. `DB_PASSWORD`는 기본값이 없어 설정하지 않으면 애플리케이션이 기동하지 않습니다. `LLM_API_KEY`는 `.env`에만 두고 커밋하지 않습니다.
 
 ### 4. 애플리케이션 실행
 
@@ -87,7 +94,7 @@ set -a; source .env; set +a
 - Swagger UI: http://localhost:8080/swagger-ui.html
 - OpenAPI JSON: http://localhost:8080/v3/api-docs
 
-`POST /api/documents/index`, `GET /api/search`만 문서화 대상이며, 운영 상태 확인용 `GET /health`는 `@Hidden`으로 Swagger 문서에서 제외됩니다(API 자체는 그대로 동작).
+`POST /api/documents/index`, `GET /api/search`, `POST /api/answers`가 문서화 대상이며, 운영 상태 확인용 `GET /health`는 `@Hidden`으로 Swagger 문서에서 제외됩니다(API 자체는 그대로 동작).
 
 ## 프로젝트 구조
 
@@ -131,6 +138,23 @@ com.nohtaehwan.rag
 │   └─ mapper/
 │       ├─ SearchMapper.java            # @Select, pgvector <=> 연산자
 │       └─ SearchRow.java
+├─ answer/                      # 검색 근거 기반 LLM 답변 생성
+│   ├─ AnswerController.java
+│   ├─ AnswerService.java
+│   ├─ AnswerRequest.java
+│   ├─ AnswerResponse.java
+│   ├─ AnswerSource.java
+│   ├─ Context.java
+│   ├─ ContextBuilder.java       # 검색 결과를 길이 제한 내 근거 context로 구성
+│   └─ PromptBuilder.java        # system/user prompt 고정 정책 + context 삽입
+├─ llm/                         # OpenAI-compatible LLM 연동
+│   ├─ LlmClient.java            # provider 추상화
+│   ├─ OpenAiCompatibleLlmClient.java
+│   ├─ LlmConfig.java
+│   ├─ LlmProperties.java
+│   ├─ LlmRequest.java
+│   ├─ LlmResponse.java
+│   └─ Prompt.java
 └─ exception/
     ├─ RagException.java            # 서버/외부 실패(500)
     └─ InvalidRequestException.java # 잘못된 요청(400)
@@ -138,7 +162,7 @@ com.nohtaehwan.rag
 
 MyBatis mapper는 XML을 쓰지 않고 인터페이스 메서드 위에 SQL을 직접 붙이는 annotation 방식(`@Select`/`@Insert`/`@Delete`)입니다. 문서 수만큼 늘어나는 chunk batch insert처럼 정적 SQL로 표현이 안 되는 경우만 `@InsertProvider` + SQL을 만드는 순수 Java 클래스(`DocumentChunkSqlProvider`)를 씁니다.
 
-Answer(LLM 호출) 모듈은 아직 구현되지 않았습니다. 진행 상황은 [`docs/rag_mvp_development_plan.md`](docs/rag_mvp_development_plan.md)에서 단계별로 확인할 수 있습니다.
+진행 상황은 [`docs/rag_mvp_development_plan.md`](docs/rag_mvp_development_plan.md)에서 단계별로 확인할 수 있습니다.
 
 ## API 목록
 
@@ -149,6 +173,7 @@ _last update: 2026-09-08_
 | GET | `/health` | 애플리케이션·DB 상태 확인 |
 | POST | `/api/documents/index` | Markdown 문서 Chunking·Embedding 후 색인(재색인 시 기존 문서 대체) |
 | GET | `/api/search?query=...` | 질문과 관련된 Chunk를 pgvector cosine distance로 검색 |
+| POST | `/api/answers` | 검색 근거를 바탕으로 LLM 답변과 출처를 생성 |
 
 **`POST /api/documents/index` 정책**
 
@@ -191,6 +216,40 @@ GET /api/search?query=결제 취소 방법
 - 결과가 없으면 오류가 아니라 `results: []`를 반환한다. 결과는 `distance`(pgvector cosine distance, 낮을수록 유사) 오름차순이다.
 - embedding 원본 벡터는 응답에 포함하지 않는다.
 - 실패 응답은 상세 원인을 노출하지 않고 `{"message": "..."}`만 반환한다(400은 검증 메시지, 500은 고정 메시지).
+
+**`POST /api/answers` 정책**
+
+요청 예시:
+
+```json
+{
+  "question": "결제 완료 후 주문을 취소하려면?"
+}
+```
+
+응답 예시:
+
+```json
+{
+  "answer": "결제 완료 후 주문 취소 절차는 ...입니다.",
+  "sources": [
+    {
+      "documentId": 1,
+      "title": "주문 관리 문서",
+      "source": "orders/cancel.md",
+      "chunkIndex": 3,
+      "distance": 0.1245
+    }
+  ]
+}
+```
+
+- 내부적으로 `GET /api/search`와 동일한 검색을 재사용한다. `question`은 필수이며 null·빈 문자열·공백만 있으면 400.
+- 검색 결과가 없거나(또는 있어도 `llm.max-context-chars` 제한으로 근거가 하나도 안 들어가면) LLM을 호출하지 않고 `{"answer": "질문에 답할 수 있는 근거 문서를 찾지 못했습니다.", "sources": []}`를 200으로 반환한다.
+- `sources`는 실제 LLM prompt에 포함된 검색 결과만 담으며 `content`는 포함하지 않는다(출처 식별·distance만).
+- LLM 호출은 OpenAI-compatible `POST /chat/completions`를 사용하며(`LLM_BASE_URL`/`LLM_MODEL`/`LLM_API_KEY` 등으로 설정), 실제 사용 서버·모델·SDK는 이 설정값에 따라 달라진다(특정 provider SDK를 코드에 고정하지 않음).
+- 검색·LLM 호출을 DB 트랜잭션으로 묶지 않는다(읽기 전용 흐름).
+- 실패 응답은 상세 원인(URL·API Key·prompt·SQL 등)을 노출하지 않고 `{"message": "..."}`만 반환한다.
 
 ## 참고 문서
 

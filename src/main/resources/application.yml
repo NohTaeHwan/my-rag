@@ -40,3 +40,13 @@ springdoc:
     operations-sorter: alpha
   api-docs:
     path: /v3/api-docs
+
+llm:
+  base-url: ${LLM_BASE_URL:http://127.0.0.1:8002/v1}
+  model: ${LLM_MODEL:local-model}
+  connect-timeout: 2s
+  read-timeout: 60s
+  max-context-chars: ${LLM_MAX_CONTEXT_CHARS:12000}
+  max-tokens: ${LLM_MAX_TOKENS:512}
+  temperature: ${LLM_TEMPERATURE:0.0}
+  api-key: ${LLM_API_KEY:}

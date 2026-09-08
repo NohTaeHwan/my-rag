@@ -1,4 +1,4 @@
-package com.nohtaehwan.rag.embedding;
+package com.nohtaehwan.rag.llm;
 
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -8,14 +8,14 @@ import org.springframework.web.client.RestClient;
 import com.nohtaehwan.rag.config.Http1RestClients;
 
 /**
- * embedding.* 설정을 바인딩하고, BGE-M3 Embedding API 호출용 RestClient를 구성한다.
+ * llm.* 설정을 바인딩하고, OpenAI-compatible LLM API 호출용 RestClient를 구성한다.
  */
 @Configuration
-@EnableConfigurationProperties(EmbeddingProperties.class)
-public class EmbeddingConfig {
+@EnableConfigurationProperties(LlmProperties.class)
+public class LlmConfig {
 
     @Bean
-    public RestClient embeddingRestClient(RestClient.Builder builder, EmbeddingProperties properties) {
+    public RestClient llmRestClient(RestClient.Builder builder, LlmProperties properties) {
         return Http1RestClients.build(builder, properties.baseUrl(), properties.connectTimeout(), properties.readTimeout());
     }
 }

@@ -31,6 +31,7 @@ class SwaggerDocumentationTest {
                 .andExpect(jsonPath("$.info.version").value("v1.0.0"))
                 .andExpect(jsonPath("$.paths['/api/search']").exists())
                 .andExpect(jsonPath("$.paths['/api/documents/index']").exists())
+                .andExpect(jsonPath("$.paths['/api/answers']").exists())
                 .andExpect(jsonPath("$.paths['/health']").doesNotExist());
     }
 
@@ -51,6 +52,27 @@ class SwaggerDocumentationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.paths['/api/documents/index'].post.responses['200']").exists())
                 .andExpect(jsonPath("$.paths['/api/documents/index'].post.responses['500']").exists());
+    }
+
+    @Test
+    void openApiJson_답변_API의_requestBody와_response가_포함된다() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paths['/api/answers'].post.requestBody").exists())
+                .andExpect(jsonPath(
+                        "$.paths['/api/answers'].post.requestBody.content['application/json'].schema.$ref")
+                        .value("#/components/schemas/AnswerRequest"))
+                .andExpect(jsonPath("$.paths['/api/answers'].post.responses['200']").exists())
+                .andExpect(jsonPath("$.paths['/api/answers'].post.responses['400']").exists())
+                .andExpect(jsonPath("$.paths['/api/answers'].post.responses['500']").exists())
+                .andExpect(jsonPath("$.components.schemas.AnswerRequest.properties.question").exists())
+                .andExpect(jsonPath("$.components.schemas.AnswerResponse.properties.answer").exists())
+                .andExpect(jsonPath("$.components.schemas.AnswerResponse.properties.sources").exists())
+                .andExpect(jsonPath("$.components.schemas.AnswerSource.properties.documentId").exists())
+                .andExpect(jsonPath("$.components.schemas.AnswerSource.properties.title").exists())
+                .andExpect(jsonPath("$.components.schemas.AnswerSource.properties.source").exists())
+                .andExpect(jsonPath("$.components.schemas.AnswerSource.properties.chunkIndex").exists())
+                .andExpect(jsonPath("$.components.schemas.AnswerSource.properties.distance").exists());
     }
 
     @Test
