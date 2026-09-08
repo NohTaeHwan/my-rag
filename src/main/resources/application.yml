@@ -25,3 +25,10 @@ document:
     target-length: 1200
     overlap-length: 150
     min-length: 80
+
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+
+retrieval:
+  top-k: ${RETRIEVAL_TOP_K:5}

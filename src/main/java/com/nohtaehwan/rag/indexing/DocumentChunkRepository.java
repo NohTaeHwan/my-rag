@@ -1,10 +1,10 @@
 package com.nohtaehwan.rag.indexing;
 
 import java.util.List;
-import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Repository;
 
+import com.nohtaehwan.rag.embedding.VectorLiteral;
 import com.nohtaehwan.rag.indexing.mapper.ChunkRow;
 import com.nohtaehwan.rag.indexing.mapper.DocumentChunkMapper;
 
@@ -37,14 +37,8 @@ public class DocumentChunkRepository {
                 .map(embeddedChunk -> new ChunkRow(
                         embeddedChunk.chunk().content(),
                         embeddedChunk.chunk().index(),
-                        toVectorLiteral(embeddedChunk.embedding())))
+                        VectorLiteral.of(embeddedChunk.embedding())))
                 .toList();
         documentChunkMapper.insertAll(documentId, rows);
-    }
-
-    private static String toVectorLiteral(List<Double> embedding) {
-        return embedding.stream()
-                .map(String::valueOf)
-                .collect(Collectors.joining(",", "[", "]"));
     }
 }

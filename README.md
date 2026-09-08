@@ -46,7 +46,7 @@ cp .env.example .env
 # .env를 열어 EMBEDDING_BASE_URL 등 실제 값 입력
 ```
 
-실행 전 셸에 로드합니다.
+`./gradlew test`/`bootRun`은 `.env`가 있으면 자동으로 읽어서 환경변수로 주입합니다(`build.gradle` 참고, 패키징된 산출물에는 영향 없음). 다른 도구로 직접 실행할 때만 셸에 따로 로드하면 됩니다.
 
 ```bash
 set -a; source .env; set +a
@@ -56,13 +56,14 @@ set -a; source .env; set +a
 |---|---|---|---|
 | `DB_URL` | 아니오 | `jdbc:postgresql://127.0.0.1:5432/rag_db` | PostgreSQL 접속 URL |
 | `DB_USERNAME` | 아니오 | `rag` | PostgreSQL 사용자 |
-| `DB_PASSWORD` | 아니오 | `rag_dev_password` | PostgreSQL 비밀번호 (로컬 개발용 기본값) |
+| `DB_PASSWORD` | **예** | 없음 | PostgreSQL 비밀번호 (`.env`에만 두고 커밋하지 않음) |
 | `SERVER_PORT` | 아니오 | `8080` | 애플리케이션 포트 |
 | `EMBEDDING_BASE_URL` | **예** | `http://127.0.0.1:8000/v1` | BGE-M3 Embedding API base URL (`/v1` 포함) |
 | `EMBEDDING_MODEL` | 아니오 | `BAAI/bge-m3` | Embedding 모델명 |
 | `EMBEDDING_DIMENSION` | 아니오 | `1024` | 기대하는 벡터 차원 |
+| `RETRIEVAL_TOP_K` | 아니오 | `5` | 검색 API가 반환할 최대 결과 수 (1~50) |
 
-기본값은 로컬 더미 값이라 실제 Embedding 서버를 쓰려면 `EMBEDDING_BASE_URL`을 반드시 채워야 합니다.
+`EMBEDDING_BASE_URL`은 로컬 더미 값이라 실제 Embedding 서버를 쓰려면 반드시 채워야 합니다. `DB_PASSWORD`는 기본값이 없어 설정하지 않으면 애플리케이션이 기동하지 않습니다.
 
 ### 4. 애플리케이션 실행
 
@@ -107,22 +108,33 @@ com.nohtaehwan.rag
 │       ├─ DocumentChunkSqlProvider.java # insertAll의 multi-row INSERT SQL을 순수 Java로 생성
 │       ├─ DocumentInsertParameter.java
 │       └─ ChunkRow.java
+├─ retrieval/                   # 질문 embedding → pgvector cosine distance 검색
+│   ├─ SearchController.java
+│   ├─ SearchService.java
+│   ├─ SearchResponse.java
+│   ├─ SearchResult.java
+│   ├─ RetrievalProperties.java
+│   └─ mapper/
+│       ├─ SearchMapper.java            # @Select, pgvector <=> 연산자
+│       └─ SearchRow.java
 └─ exception/
-    └─ RagException.java        # 프로젝트 단일 비즈니스 예외
+    ├─ RagException.java            # 서버/외부 실패(500)
+    └─ InvalidRequestException.java # 잘못된 요청(400)
 ```
 
 MyBatis mapper는 XML을 쓰지 않고 인터페이스 메서드 위에 SQL을 직접 붙이는 annotation 방식(`@Select`/`@Insert`/`@Delete`)입니다. 문서 수만큼 늘어나는 chunk batch insert처럼 정적 SQL로 표현이 안 되는 경우만 `@InsertProvider` + SQL을 만드는 순수 Java 클래스(`DocumentChunkSqlProvider`)를 씁니다.
 
-Retrieval(pgvector 검색), Answer(LLM 호출) 모듈은 아직 구현되지 않았습니다. 진행 상황은 [`docs/rag_mvp_development_plan.md`](docs/rag_mvp_development_plan.md)에서 단계별로 확인할 수 있습니다.
+Answer(LLM 호출) 모듈은 아직 구현되지 않았습니다. 진행 상황은 [`docs/rag_mvp_development_plan.md`](docs/rag_mvp_development_plan.md)에서 단계별로 확인할 수 있습니다.
 
 ## API 목록
 
-_last update: 2026-09-04_
+_last update: 2026-09-08_
 
 | Method | Path | 설명 |
 |---|---|---|
 | GET | `/health` | 애플리케이션·DB 상태 확인 |
 | POST | `/api/documents/index` | Markdown 문서 Chunking·Embedding 후 색인(재색인 시 기존 문서 대체) |
+| GET | `/api/search?query=...` | 질문과 관련된 Chunk를 pgvector cosine distance로 검색 |
 
 **`POST /api/documents/index` 정책**
 
@@ -134,6 +146,37 @@ _last update: 2026-09-04_
 - 여러 문서 중 뒤의 문서가 실패해도 앞서 이미 저장(commit)된 문서는 유지된다(부분 성공 허용).
 - Chunk가 0개인 빈 문서도 문서 수(`documentCount`)에는 포함하고 Chunk 수(`chunkCount`)에는 포함하지 않는다.
 - 실패 응답은 DB·Embedding API 상세 원인을 노출하지 않고 `{"message": "문서 색인에 실패했습니다."}`만 반환한다.
+
+**`GET /api/search?query=...` 정책**
+
+요청 예시:
+
+```
+GET /api/search?query=결제 취소 방법
+```
+
+응답 예시:
+
+```json
+{
+  "results": [
+    {
+      "documentId": 1,
+      "title": "주문 관리 문서",
+      "source": "orders/cancel.md",
+      "content": "결제 완료 후 주문을 취소하려면 ...",
+      "chunkIndex": 3,
+      "distance": 0.1245
+    }
+  ]
+}
+```
+
+- `query`는 필수 파라미터이며 null·빈 문자열·공백만 있으면 400을 반환한다.
+- Top-K는 요청으로 받지 않고 `retrieval.top-k` 설정(기본 5)을 따른다.
+- 결과가 없으면 오류가 아니라 `results: []`를 반환한다. 결과는 `distance`(pgvector cosine distance, 낮을수록 유사) 오름차순이다.
+- embedding 원본 벡터는 응답에 포함하지 않는다.
+- 실패 응답은 상세 원인을 노출하지 않고 `{"message": "..."}`만 반환한다(400은 검증 메시지, 500은 고정 메시지).
 
 ## 참고 문서
 

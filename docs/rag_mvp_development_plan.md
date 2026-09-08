@@ -290,30 +290,59 @@ health/mapper/HealthMapper.java
 
 ### 6단계. 유사도 검색
 
-- [ ] 질문을 BGE-M3로 변환
-- [ ] pgvector cosine distance 검색
-- [ ] Top-K 개수 설정
-- [ ] 제목·내용·출처·거리 반환
-- [ ] 관련 문서가 실제로 상위에 나오는지 확인
-
-검색 SQL 예시:
-
-```sql
-SELECT id,
-       document_id,
-       content,
-       chunk_index,
-       embedding <=> CAST(:query_embedding AS vector) AS distance
-FROM document_chunk
-ORDER BY embedding <=> CAST(:query_embedding AS vector)
-LIMIT :top_k;
-```
-
-검색 API 예시:
+- [x] 질문을 BGE-M3로 변환
+- [x] pgvector cosine distance 검색
+- [x] Top-K 개수 설정
+- [x] 제목·내용·출처·거리 반환
+- [x] 관련 문서가 실제로 상위에 나오는지 확인(실제 PostgreSQL 통합 테스트로 검증)
 
 ```text
 GET /api/search?query=결제 취소 방법
 ```
+
+요청 본문 없음, 파라미터는 `query` 하나(단일 GET 파라미터 규칙에 따라 `@RequestParam`으로 직접 받음). `query`가 null/빈 문자열/공백만 있으면 400.
+
+응답 예시:
+
+```json
+{
+  "results": [
+    {
+      "documentId": 1,
+      "title": "주문 관리 문서",
+      "source": "orders/cancel.md",
+      "content": "결제 완료 후 주문을 취소하려면 ...",
+      "chunkIndex": 3,
+      "distance": 0.1245
+    }
+  ]
+}
+```
+
+결과가 없으면 오류가 아니라 `results: []`를 반환한다. `distance`는 pgvector cosine distance 원본값(낮을수록 유사)이며 similarity로 변환하지 않는다. embedding 원본 벡터는 응답에 포함하지 않는다.
+
+**확정된 설계**
+
+- 패키지: `com.nohtaehwan.rag.retrieval` — `SearchController`/`SearchService`/`SearchResponse`/`SearchResult`/`RetrievalProperties` / (mapper 하위) `SearchMapper`/`SearchRow`. 5-1단계와 동일하게 XML 없이 annotation SQL(`@Select`)만 사용한다.
+- 처리 흐름: `SearchController.search(query)` → `SearchService.search(query)`(query 검증 → `EmbeddingClient.embed(query)` → pgvector 리터럴 변환 → `SearchMapper.search(literal, topK)` → 응답 DTO 변환 → 로그) → 응답. embedding 호출과 DB 검색은 하나의 트랜잭션으로 묶지 않는다(읽기 전용 흐름이라 원자성 요구가 없음).
+- Top-K 정책: 요청 파라미터로 받지 않고 `retrieval.top-k` 설정으로 고정(`RetrievalProperties`, 기본 5, `[1, 50]` 범위 벗어나면 애플리케이션 시작 시 실패 — `EmbeddingProperties`/`DocumentProperties`와 같은 compact constructor 검증 패턴).
+- 검색 SQL(annotation, `SearchMapper`):
+  ```sql
+  SELECT c.document_id, d.title, d.source, c.content, c.chunk_index,
+         c.embedding <=> #{queryEmbeddingLiteral}::vector AS distance
+  FROM tb_document_chunk c
+  JOIN tb_document d ON d.id = c.document_id
+  ORDER BY c.embedding <=> #{queryEmbeddingLiteral}::vector
+  LIMIT #{topK}
+  ```
+  `queryEmbeddingLiteral`(pgvector 리터럴 문자열)과 `topK` 둘 다 `@Param`으로 파라미터 바인딩(문자열 연결 없음). distance는 `SELECT`와 `ORDER BY`에서 동일한 표현식을 써서 정렬 기준과 반환값이 항상 일치하게 한다.
+- **MyBatis 설정 추가**: `mybatis.configuration.map-underscore-to-camel-case: true`를 `application.yml`에 추가했다. 5단계/5-1단계 mapper는 컬럼명 변환이 필요 없는 케이스뿐이었는데, 이번엔 `document_id`→`documentId`, `chunk_index`→`chunkIndex` 자동 매핑이 처음 필요해서 추가함.
+- **`SearchRow`는 record**: 순수 조회 결과라 쓰기(setter)가 필요 없다. MyBatis 3.5.15+(현재 번들 버전 3.5.17)는 record를 결과 매핑 대상으로 정식 지원한다 — `ChunkRow`/`DocumentInsertParameter`(5-1단계)를 class로 둔 것은 "쓰기 가능해야 하는 구조적 필요" 때문이었고, 쓰기가 필요 없는 `SearchRow`는 record가 맞는 선택이다.
+- **400/500 예외 구분 신설**: 기존엔 `RagException`(500) 하나뿐이었다. 이번에 `com.nohtaehwan.rag.exception.InvalidRequestException`을 추가해 "잘못된 요청(400)"을 표현한다 — 특정 필드에 묶이지 않은 범용 이름으로, 이후 다른 엔드포인트의 검증 실패도 재사용한다. `RagException`은 계속 500(외부/DB/내부 실패) 전용. `SearchController`에 `@ExceptionHandler(InvalidRequestException.class)`(400) / `@ExceptionHandler(RagException.class)`(500) / `@ExceptionHandler(DataAccessException.class)`(500) 3개를 로컬로 둔다(전역 예외 처리기 없음, 기존 `DocumentIndexController` 패턴과 동일).
+- 로깅: query 원문·embedding 벡터·외부 API 응답 원문은 로그에 남기지 않는다. `queryLength`/`topK`/`resultCount`만 기록.
+- **실제 PostgreSQL 통합 테스트(`SearchPersistenceIntegrationTest`)**: 로컬 `rag-postgres` 컨테이너 사용, 기존 관례(Testcontainers 없음, DB 없으면 그대로 실패) 그대로. 모든 차원이 동일한/번갈아 나오는/정반대인 고정 벡터를 써서 cosine distance가 정확히 0/1/2가 되도록 설계 — 로컬 DB에 이미 있는 실제 색인 데이터가 섞여 있어도 이 세 값의 상대적 순서가 수학적으로 항상 보장되도록 했다. 검증 내용: 관련성 높은 Chunk가 낮은 distance로 먼저 반환됨, topK 제한과 반환 필드가 실제 저장값과 일치, query 벡터 차원이 다르면 실제 DB 오류가 발생.
+  - **테스트 데이터 격리(코드리뷰 후속 수정)**: 최초 구현은 고정 source(`search-integration-test/doc.md`)를 썼는데, 같은 source가 실제 DB에 이미 있으면 insert가 UNIQUE 제약으로 실패하거나 cleanup이 다른(테스트가 만들지 않은) 데이터를 지울 수 있다는 지적을 받았다. `@BeforeEach`마다 `"search-integration-test/" + UUID.randomUUID() + ".md"`로 실행별 고유 source(`testSource` 인스턴스 필드)를 생성하도록 수정해, 저장·검증·cleanup이 전부 그 값 하나만 참조하게 했다 — 기존 실제 데이터와 충돌할 확률이 사실상 0이고, 전체 테이블 삭제 같은 파괴적 작업도 하지 않는다.
+- **테스트 공백(의도적으로 남김)**: "검색 대상 Chunk가 전혀 없을 때(전체 테이블 0건) 빈 목록 반환"은 실제 통합 테스트로 검증하지 않았다 — 이 검색 SQL은 문서 단위로 필터링하지 않고 `tb_document_chunk` 전체를 대상으로 하기 때문에, 이를 진짜로 재현하려면 로컬 DB의 기존 실제 데이터를 전부 지워야 해서(파괴적 작업이라 하지 않음) 대신 `SearchServiceTest`(mock)에서 "mapper가 빈 목록을 반환하면 서비스도 빈 목록을 반환한다"로 애플리케이션 레벨 처리만 검증했다. `LIMIT`을 포함한 빈 테이블 조회 자체는 SQL 표준 동작이라 별도 실증이 필요하지 않다고 판단.
 
 이 단계까지 끝나면 LLM 없이도 다음을 검증할 수 있다.
 

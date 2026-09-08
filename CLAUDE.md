@@ -59,6 +59,7 @@ PostgreSQL + pgvector 기반 검색 증강 생성(RAG) 백엔드 MVP
 - 현재 API 명세 도구는 사용하지 않는다. Swagger/OpenAPI 의존성을 임의로 추가하지 않는다.
 - DB migration은 `src/main/resources/db/migration/`에서 관리한다.
 - 현재 구현된 Health Check는 `/health`이며 응답에 애플리케이션과 DB 상태를 함께 포함한다.
+- 예외는 2026-09-08부터 두 클래스로 구분한다: `RagException`(500, 서버/외부 실패), `InvalidRequestException`(400, 잘못된 클라이언트 요청). 같은 성격의 실패에 새 예외 클래스를 추가로 만들지 말고 이 둘 중 해당하는 것을 재사용한다. `DB_PASSWORD`는 `application.yml` 기본값이 없으므로 `.env`(로컬) 또는 실제 배포 환경의 환경변수로 반드시 채워야 한다.
 
 ## claude-kit 작업 규칙
 
