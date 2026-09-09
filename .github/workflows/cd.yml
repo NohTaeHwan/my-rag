@@ -3,7 +3,7 @@
 # 자동 트리거(main push, tag)는 의도적으로 넣지 않았다.
 #
 # 사전 준비 (GitHub 저장소 Settings에서 사람이 직접 설정):
-#   1. Settings > Environments > New environment "spark-mvp" 생성, Required reviewer 지정
+#   1. Settings > Environments > New environment "prd-spark" 생성, Required reviewer 지정
 #   2. 위 Environment에 Secret 등록: SPARK_HOST, SPARK_USER, SPARK_SSH_KEY, SPARK_DEPLOY_PATH
 #      (DB_PASSWORD, LLM_API_KEY는 이 workflow로 전달하지 않는다 — Spark의 보호된
 #       EnvironmentFile에만 존재해야 한다.)
@@ -24,7 +24,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: spark-mvp
+    environment: prd-spark
     steps:
       - name: Download built JAR from CI run
         uses: actions/download-artifact@v4
