@@ -1,5 +1,4 @@
-# EXAMPLE / UNVERIFIED — Spark 실접속(SSH 가능 여부, self-hosted runner 필요 여부)이
-# 확인되기 전까지는 사람이 workflow_dispatch로 수동 실행할 때만 동작하도록 둔다.
+# EXAMPLE / UNVERIFIED — 사람이 workflow_dispatch로 수동 실행할 때만 동작한다.
 # 자동 트리거(main push, tag)는 의도적으로 넣지 않았다.
 #
 # 사전 준비 (GitHub 저장소 Settings에서 사람이 직접 설정):
@@ -7,16 +6,14 @@
 #   2. 위 Environment에 Secret 등록: SPARK_HOST, SPARK_USER, SPARK_SSH_KEY, SPARK_DEPLOY_PATH
 #      (DB_PASSWORD, LLM_API_KEY는 이 workflow로 전달하지 않는다 — Spark의 보호된
 #       EnvironmentFile에만 존재해야 한다.)
-#   3. Spark가 GitHub-hosted runner에서 SSH로 접근 가능한지 미확인 상태.
-#      접근 불가능하면 self-hosted runner로 runs-on을 교체해야 한다.
+#   3. Spark의 실제 sshd는 22번이 아니라 10022번 포트를 쓴다(Tailscale SSH가 22번을 가로챔).
+#   4. 이미지는 ghcr.io/nohtaehwan/my-rag에서 pull한다(ci.yml이 main push마다 push함).
+#      GHCR 패키지가 public이면 Spark에서 별도 로그인 없이 pull 가능 — 이 workflow도
+#      Spark에 별도 GHCR 인증을 주입하지 않는다(패키지를 public으로 설정했다는 전제).
 name: CD (DGX Spark)
 
 on:
-  workflow_dispatch:
-    inputs:
-      jar_run_id:
-        description: 'CI 워크플로의 run id (배포할 my-rag-jar artifact 출처)'
-        required: true
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -26,35 +23,19 @@ jobs:
     runs-on: ubuntu-latest
     environment: prd-spark
     steps:
-      - name: Download built JAR from CI run
-        uses: actions/download-artifact@v4
-        with:
-          name: my-rag-jar
-          path: dist
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.jar_run_id }}
-
-      - name: Verify JAR exists
-        run: test -f dist/*.jar
-
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SPARK_SSH_KEY }}" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -H "${{ secrets.SPARK_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Copy JAR to Spark
-        run: |
-          scp -i ~/.ssh/id_deploy dist/*.jar \
-            "${{ secrets.SPARK_USER }}@${{ secrets.SPARK_HOST }}:${{ secrets.SPARK_DEPLOY_PATH }}/app/my-rag.jar.new"
+          ssh-keyscan -p 10022 -H "${{ secrets.SPARK_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Run protected deploy script on Spark
         run: |
-          ssh -i ~/.ssh/id_deploy "${{ secrets.SPARK_USER }}@${{ secrets.SPARK_HOST }}" \
+          ssh -i ~/.ssh/id_deploy -p 10022 "${{ secrets.SPARK_USER }}@${{ secrets.SPARK_HOST }}" \
             "${{ secrets.SPARK_DEPLOY_PATH }}/deploy.sh"
 
       - name: Health check
         run: |
-          ssh -i ~/.ssh/id_deploy "${{ secrets.SPARK_USER }}@${{ secrets.SPARK_HOST }}" \
-            "curl -fsS http://127.0.0.1:8080/health"
+          ssh -i ~/.ssh/id_deploy -p 10022 "${{ secrets.SPARK_USER }}@${{ secrets.SPARK_HOST }}" \
+            "curl -fsS http://127.0.0.1:8090/health"
