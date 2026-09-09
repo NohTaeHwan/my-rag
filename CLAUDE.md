@@ -85,5 +85,5 @@ PostgreSQL + pgvector 기반 검색 증강 생성(RAG) 백엔드 MVP
 | 개발 계획 확인 시 | `docs/rag_mvp_development_plan.md` |
 | claude-kit 동작 검증 시 | `docs/claude_kit_verification.md` |
 | 개발 작업별 준수 확인 시 | `docs/claude_kit_development_checklist.md` |
-| 배포·운영 작업 시 | 현재 등록된 운영 문서 없음 — 먼저 문서화 |
+| 배포·운영 작업 시 | `docs/dgx_spark_mvp_deployment.md` |
 | Git push·PR 시 | remote 확인 후 진행 — 임의 push 금지 |

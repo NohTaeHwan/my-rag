@@ -1,0 +1,18 @@
+# EXAMPLE — placeholder 값을 Spark 실제 환경으로 치환한 뒤
+# /etc/systemd/system/my-rag.service 로 설치한다.
+# 실제 Java 경로는 Spark에서 `command -v java`로 확인한다.
+[Unit]
+Description=my-rag Spring Boot API
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=<spark-user>
+WorkingDirectory=<deploy-directory>
+EnvironmentFile=<protected-env-file>
+ExecStart=/usr/bin/java -jar <deploy-directory>/app/my-rag.jar
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

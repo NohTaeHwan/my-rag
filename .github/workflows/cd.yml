@@ -1,0 +1,60 @@
+# EXAMPLE / UNVERIFIED — Spark 실접속(SSH 가능 여부, self-hosted runner 필요 여부)이
+# 확인되기 전까지는 사람이 workflow_dispatch로 수동 실행할 때만 동작하도록 둔다.
+# 자동 트리거(main push, tag)는 의도적으로 넣지 않았다.
+#
+# 사전 준비 (GitHub 저장소 Settings에서 사람이 직접 설정):
+#   1. Settings > Environments > New environment "spark-mvp" 생성, Required reviewer 지정
+#   2. 위 Environment에 Secret 등록: SPARK_HOST, SPARK_USER, SPARK_SSH_KEY, SPARK_DEPLOY_PATH
+#      (DB_PASSWORD, LLM_API_KEY는 이 workflow로 전달하지 않는다 — Spark의 보호된
+#       EnvironmentFile에만 존재해야 한다.)
+#   3. Spark가 GitHub-hosted runner에서 SSH로 접근 가능한지 미확인 상태.
+#      접근 불가능하면 self-hosted runner로 runs-on을 교체해야 한다.
+name: CD (DGX Spark)
+
+on:
+  workflow_dispatch:
+    inputs:
+      jar_run_id:
+        description: 'CI 워크플로의 run id (배포할 my-rag-jar artifact 출처)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: spark-mvp
+    steps:
+      - name: Download built JAR from CI run
+        uses: actions/download-artifact@v4
+        with:
+          name: my-rag-jar
+          path: dist
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.jar_run_id }}
+
+      - name: Verify JAR exists
+        run: test -f dist/*.jar
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SPARK_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "${{ secrets.SPARK_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Copy JAR to Spark
+        run: |
+          scp -i ~/.ssh/id_deploy dist/*.jar \
+            "${{ secrets.SPARK_USER }}@${{ secrets.SPARK_HOST }}:${{ secrets.SPARK_DEPLOY_PATH }}/app/my-rag.jar.new"
+
+      - name: Run protected deploy script on Spark
+        run: |
+          ssh -i ~/.ssh/id_deploy "${{ secrets.SPARK_USER }}@${{ secrets.SPARK_HOST }}" \
+            "${{ secrets.SPARK_DEPLOY_PATH }}/deploy.sh"
+
+      - name: Health check
+        run: |
+          ssh -i ~/.ssh/id_deploy "${{ secrets.SPARK_USER }}@${{ secrets.SPARK_HOST }}" \
+            "curl -fsS http://127.0.0.1:8080/health"
