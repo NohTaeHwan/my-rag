@@ -230,6 +230,7 @@ curl -fsS -X POST "${LLM_BASE_URL}/chat/completions" \
 - `Dockerfile`: 멀티스테이지 빌드(`eclipse-temurin:17-jdk`로 빌드 → `eclipse-temurin:17-jre`로 실행). Spark 호스트의 Java 8/17 문제와 무관하게 동작한다.
 - 컨테이너는 `network_mode: host`로 띄운다 — 기존에 검증된 `127.0.0.1:5433`(DB)/`8003`(Embedding)/`8002`(LLM) 값을 그대로 재사용하기 위함.
 - **이미지 전달은 GitHub Container Registry(ghcr.io) 경유**로 최종 결정(처음엔 `docker save`/`load`+scp로 시작했다가, 레지스트리가 표준적인 방식이라 전환). `ci.yml`이 `main` push마다 `ghcr.io/nohtaehwan/my-rag:latest`와 `:<commit-sha>`를 빌드·푸시한다. Spark는 그 이미지를 그냥 `docker compose pull`로 받는다.
+- **아키텍처 버그 발견·수정 (2026-09-09)**: GitHub Actions 러너는 x86_64라 기본 `docker build`는 AMD64 이미지를 만든다. 이걸 ARM64인 Spark에서 실행하면 `exec /opt/java/openjdk/bin/java: exec format error`로 컨테이너가 재시작을 무한 반복한다(실제로 겪음). `ci.yml`에 `docker/setup-qemu-action` + `docker/setup-buildx-action` + `docker/build-push-action`(`platforms: linux/arm64`)을 추가해 명시적으로 ARM64용으로 빌드하도록 고쳤다. 로컬(맥북, Apple Silicon)에서 빌드할 땐 우연히 아키텍처가 맞아서 이 문제가 안 보였다.
 - **사전 준비(1회, GitHub 웹에서 수동)**: 저장소 → Packages → `my-rag` 패키지 → Package settings → Visibility를 **Public**으로 변경. 이미지에 secret이 baked-in되지 않으므로 public이어도 안전하고, Spark에서 별도 GHCR 로그인 없이 pull 가능해진다.
 
 **1. 빌드 및 푸시 (로컬, 또는 CI가 자동으로 함)**
