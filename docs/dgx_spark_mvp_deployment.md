@@ -1,6 +1,6 @@
 # DGX Spark MVP 배포 문서
 
-> 상태: 저장소 쪽 준비만 완료. 아래 Spark 실기기 절차는 아직 실행 전이라 전부 `[ ]`/`UNVERIFIED`다.
+> 상태(2026-09-09): Task 4(하드웨어 점검) 완료 — Java 17 미설치가 블로커로 남음(sudo 권한 요청 중). Task 5(Embedding, 8003)·Task 6(LLM, 8002) 모두 기존에 떠 있던 서버로 PASS 확인. Task 7 이후는 아직 `[ ]`/`UNVERIFIED`다.
 > 원본 계획: `.hermes/plans/2026-09-08_161535-dgx-spark-mvp-deployment.md`
 > 실제 Spark 사용자명·IP·경로·Secret은 이 문서에 절대 기록하지 않는다. 아래 `<placeholder>`를 실행 시점에만 실제 값으로 치환한다.
 
@@ -9,7 +9,7 @@
 ```text
 Spring Boot API (127.0.0.1:8080, 필요 시만 외부 노출)
   → PostgreSQL   127.0.0.1:5432 (외부 비공개)
-  → Embedding    127.0.0.1:8000 (외부 비공개)
+  → Embedding    127.0.0.1:8003 (외부 비공개)
   → LLM          127.0.0.1:8002 (외부 비공개)
 ```
 
@@ -49,21 +49,28 @@ free -h
 df -h
 ```
 
-- [ ] `uname -m` 결과가 실제 아키텍처와 일치
-- [ ] NVIDIA GPU/드라이버 표시됨
-- [ ] Java 17 사용 가능
-- [ ] Docker daemon 실행 중
-- [ ] NVIDIA Container Runtime 사용 가능 여부 확인
-- [ ] 모델·볼륨용 디스크 여유 확인
-- [ ] 메모리/GPU 메모리 여유 기록
+- [x] `uname -m` 결과가 실제 아키텍처와 일치 — `aarch64`
+- [x] NVIDIA GPU/드라이버 표시됨 — `NVIDIA GB10`, Driver 580.173.02, CUDA 13.0
+- [ ] Java 17 사용 가능 — **FAIL**: 기본 `java -version`이 `1.8.0_502` (Java 8). Task 7 전에 Java 17 설치·전환 필요
+- [x] Docker daemon 실행 중 — Docker 29.2.1, Compose v5.0.2
+- [x] NVIDIA Container Runtime 사용 가능 여부 확인 — `nvidia-container-cli info` 정상 (Model: NVIDIA GB10)
+- [x] 모델·볼륨용 디스크 여유 확인 — `/` 3.7T 중 3.2T 여유(11% 사용)
+- [x] 메모리/GPU 메모리 여유 기록 — 시스템 메모리 121Gi 중 가용 22Gi (GPU에서 기존 `sglang::scheduler` 프로세스가 87GB 사용 중이라 여유가 그만큼 줄어든 상태, 통합 메모리 아키텍처라 CPU/GPU 메모리 풀 공유). Swap 15Gi 중 4.8Gi 사용
 
-실행 결과: UNVERIFIED (Spark 미접속)
+OS: Ubuntu 24.04.4 LTS (Noble)
+
+실행 결과: **PARTIAL PASS** (2026-09-09 실행) — Java 17 미설치가 유일한 실질 블로커. 나머지는 계획 가정과 일치.
 
 문제 발생 시 NVIDIA 드라이버를 임의 교체하지 않는다. DGX Spark 기본 이미지·DGX OS·CUDA 조합을 먼저 확인한다.
 
 ---
 
 ## Task 5 — BGE-M3 Embedding API 실행
+
+> 2026-09-09 확인: 이 Spark 박스에는 이미 Embedding 서버(sglang 기반, `BAAI/bge-m3`)가 **8003번 포트**에서
+> 실행 중이며 `127.0.0.1`/Tailscale IP 양쪽에 바인딩되어 있다. `curl` 검증으로 1024차원 벡터 응답을
+> 실제로 확인했다(PASS). 누가/언제 이 프로세스를 띄웠는지는 별도 확인이 필요하지만, 새로 설치할 필요는 없다.
+> 아래 실행 절차는 이 서버가 없거나 재기동이 필요한 경우를 위한 참고용으로 남겨둔다.
 
 **결정 순서**
 1. Spark에 vLLM 기설치 여부 확인
@@ -83,28 +90,37 @@ python3 -c 'import torch; print(torch.__version__); print(torch.cuda.is_availabl
 vllm serve BAAI/bge-m3 \
   --task embed \
   --host 127.0.0.1 \
-  --port 8000
+  --port 8003
 ```
 
 **검증**
 ```bash
-curl -fsS http://127.0.0.1:8000/v1/embeddings \
+curl -fsS http://127.0.0.1:8003/v1/embeddings \
   -H 'Content-Type: application/json' \
   -d '{"model":"BAAI/bge-m3","input":"결제 완료 후 주문을 취소하려면?"}' \
   | python3 -c 'import json,sys; x=json.load(sys.stdin); print(len(x["data"][0]["embedding"]))'
 ```
 
-- [ ] HTTP 200
-- [ ] `data[0].embedding` 존재, 길이 1024
-- [ ] 한국어 문장 반복 호출 성공
-- [ ] 모델 로딩 오류 없음
-- [ ] 8000 포트가 외부 전체 인터페이스에 노출되지 않음
+- [x] HTTP 200
+- [x] `data[0].embedding` 존재, 길이 1024 — 실제 curl로 확인
+- [ ] 한국어 문장 반복 호출 성공 — 1회만 확인, 반복 호출 미검증
+- [ ] 모델 로딩 오류 없음 — 서버 자체 로그 미확인(기존에 떠 있던 프로세스라 로딩 로그 접근 안 함)
+- [ ] 8003 포트가 외부 전체 인터페이스에 노출되지 않음 — **확인 필요**: `ss -lntp` 결과 `127.0.0.1`뿐 아니라 Tailscale IP(`100.90.113.121`)에도 바인딩되어 있음. `0.0.0.0` 전체 노출은 아니지만 계획서 권장(loopback 전용)보다는 넓게 열려 있는 상태
 
-실행 결과: UNVERIFIED — 실제 Embedding API 확인 전까지 문서 색인(Task 9)을 진행하지 않는다.
+실행 결과: **PASS** (2026-09-09, 벡터 길이 1024 확인) — 단, 포트 바인딩 범위는 계획서 권장보다 넓어서 별도 검토 필요.
 
 ---
 
 ## Task 6 — LLM API 실행 또는 외부 연결 확인
+
+> 2026-09-09 확인: `POST /v1/chat/completions`가 8002에서 정상 응답(HTTP 200), Bearer 토큰 인증 필요(확인됨).
+> `GET /v1/models` 응답으로 실제 서빙 모델 id는 `qwen3.8-27b-sglang` (max_model_len 262144) — 요청의
+> `model` 필드는 서버가 검증하지 않고 무시하는 것으로 보임(다른 model 문자열을 보내도 동일 출력).
+> `.env`의 `LLM_MODEL` 값은 실제 값과 다를 수 있으니 `/v1/models`로 재확인해 맞출 것.
+> **알려진 리스크**: 이 모델은 reasoning 모드가 있어 `reasoning_content`를 먼저 채우고, `max_tokens`가
+> 작으면(`finish_reason: length`) 실제 `content`가 빈 문자열로 올 수 있다. 이 경우 앱은 `RagException`(500)으로
+> 처리한다(의도된 동작). Task 10 E2E에서 실제 질문으로 재현되는지 확인하고, 필요하면 `LLM_MAX_TOKENS`를
+> 올리는 것을 검토한다(모델 튜닝은 이번 배포 범위 밖이라 지금 코드는 변경하지 않음).
 
 ```bash
 curl -fsS -X POST "${LLM_BASE_URL}/chat/completions" \
@@ -122,12 +138,12 @@ curl -fsS -X POST "${LLM_BASE_URL}/chat/completions" \
 
 인증이 필요하면 실제 credential을 명령행에 직접 쓰지 말고 승인된 보호 스크립트로 `Authorization` 헤더를 주입한다.
 
-- [ ] HTTP 200
-- [ ] `choices[0].message.content` 존재
-- [ ] 응답 시간 < read-timeout
-- [ ] API Key 없는 서버는 Authorization 헤더 없이 호출
+- [x] HTTP 200
+- [ ] `choices[0].message.content` 존재 — `max_tokens` 작을 때 reasoning에 토큰 소모되어 빈 문자열 발생 확인(위 리스크 참고), 충분한 `max_tokens`로 재검증 필요
+- [ ] 응답 시간 < read-timeout — 별도 측정 안 함
+- [x] API Key 있는 서버는 Authorization 헤더로 호출 — Bearer 토큰 인증 확인됨 (무인증 케이스 아님, 계획서 항목과 반대 케이스로 확인)
 
-실행 결과: UNVERIFIED
+실행 결과: **PASS (인증/연결 자체는 정상)**, `content` 빈 응답 리스크는 Task 10에서 재검증 필요
 
 ---
 
@@ -149,7 +165,7 @@ scp build/libs/<jar-name>.jar <spark-user>@<spark-host>:<deploy-directory>/app/m
 DB_URL=jdbc:postgresql://127.0.0.1:5432/rag_db
 DB_USERNAME=rag
 DB_PASSWORD=<outside repository>
-EMBEDDING_BASE_URL=http://127.0.0.1:8000/v1
+EMBEDDING_BASE_URL=http://127.0.0.1:8003/v1
 EMBEDDING_MODEL=BAAI/bge-m3
 EMBEDDING_DIMENSION=1024
 LLM_BASE_URL=http://127.0.0.1:8002/v1
@@ -290,7 +306,7 @@ pg_dump --version
 
 - [ ] PostgreSQL healthy, Spring Boot active
 - [ ] Embedding/LLM active 또는 외부 endpoint 접근 가능
-- [ ] 5432/8000/8002 외부 미공개
+- [ ] 5432/8003/8002 외부 미공개
 - [ ] 디스크·GPU 메모리 여유 확인
 - [ ] 애플리케이션 로그 위치·보존 기준 확인
 
