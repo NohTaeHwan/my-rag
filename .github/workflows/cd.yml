@@ -10,6 +10,10 @@
 #   4. 이미지는 ghcr.io/nohtaehwan/my-rag에서 pull한다(ci.yml이 main push마다 push함).
 #      GHCR 패키지가 public이면 Spark에서 별도 로그인 없이 pull 가능 — 이 workflow도
 #      Spark에 별도 GHCR 인증을 주입하지 않는다(패키지를 public으로 설정했다는 전제).
+#   5. GitHub-hosted 러너는 Spark의 Tailscale 사설 IP(100.90.113.121)에 기본적으로 접근할 수
+#      없다(CGNAT 대역이라 공인 인터넷에서 라우팅 안 됨). tailscale/github-action으로 이 job이
+#      도는 동안만 러너를 Tailnet에 임시로 join시킨다. Secret 등록: TAILSCALE_AUTHKEY
+#      (Ephemeral 키 — job 종료/연결 해제 시 Tailnet에서 자동 삭제됨).
 name: CD (DGX Spark)
 
 on:
@@ -23,6 +27,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: prd-spark
     steps:
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh

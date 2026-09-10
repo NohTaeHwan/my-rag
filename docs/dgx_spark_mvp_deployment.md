@@ -1,9 +1,9 @@
 # DGX Spark MVP 배포 문서
 
-> 상태(2026-09-09): Task 3(Postgres, 5433)·4(하드웨어, Java 17)·5(Embedding, 8003)·6(LLM, 8002) PASS.
-> 배포 방식을 JAR+systemd에서 **Docker 컨테이너(`network_mode: host`)**로 전환(Task 7 아키텍처 변경 참고) —
-> JAR 방식으로는 이미 Task 7 PASS까지 확인했었고, 로컬 Docker 이미지도 검증 완료. Spark에서 실제
-> 컨테이너로 띄우는 것과 Task 8(재시작 정책) 이후는 아직 `[ ]`/`UNVERIFIED`다.
+> 상태(2026-09-09): Task 3(Postgres, 5433)·4(하드웨어, Java 17)·5(Embedding, 8003)·6(LLM, 8002)·7(Docker
+> 컨테이너, GHCR pull, ARM64 빌드 수정 후 `{"status":"UP","database":"UP"}` 확인)·8(재시작 정책, 크래시
+> 재현 후 자동 복구 확인) 모두 PASS. Task 9 이후(E2E 검증 데이터·실제 색인/검색/답변)는 아직
+> `[ ]`/`UNVERIFIED`다.
 > 원본 계획: `.hermes/plans/2026-09-08_161535-dgx-spark-mvp-deployment.md`
 > 실제 Spark 사용자명·IP·경로·Secret은 이 문서에 절대 기록하지 않는다. 아래 `<placeholder>`를 실행 시점에만 실제 값으로 치환한다.
 
@@ -281,10 +281,9 @@ curl -fsS -I http://127.0.0.1:8090/swagger-ui.html
 - [x] (JAR 방식으로 사전 검증됨, 2026-09-09) API 프로세스 기동 — 포그라운드 실행, 에러 없음
 - [x] (JAR 방식으로 사전 검증됨) Flyway migration 성공, DB 연결 성공 — `{"database":"UP","status":"UP"}`
 - [x] (로컬 Docker 빌드) 이미지 빌드 성공, 로컬 컨테이너로 `/health` PASS 확인 (host.docker.internal로 맥북 DB 연결 테스트)
-- [ ] Spark에서 Docker Compose로 실제 기동 — **UNVERIFIED**, 아래 절차 실행 필요
-- [ ] OpenAPI JSON / Swagger UI 200 (Spark 컨테이너 기준) — UNVERIFIED
+- [x] Spark에서 Docker Compose로 실제 기동 — `docker compose -f docker-compose.app.yml up -d` 후 `{"status":"UP","database":"UP"}` 확인 (ARM64 빌드 수정 후)
 
-실행 결과: **부분 PASS** — 로직 자체(JAR 실행, 로컬 Docker 이미지)는 검증됐고, Spark에서 실제 컨테이너로 띄우는 것만 남음
+실행 결과: **PASS** (2026-09-09, GHCR pull 기반, ARM64 이미지, `~/services/my-rag`, 포트 8090)
 
 ---
 
@@ -300,11 +299,14 @@ docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' my-rag-app
 systemctl is-enabled docker
 ```
 
-- [ ] `RestartPolicy.Name`이 `unless-stopped`
-- [ ] `docker` 서비스가 `enabled` (재부팅 시 자동 기동)
-- [ ] 컨테이너를 강제로 죽여도(`docker kill my-rag-app`) 자동 재시작되는지 확인
+- [x] `RestartPolicy.Name`이 `unless-stopped`
+- [x] `docker` 서비스가 `enabled` (재부팅 시 자동 기동)
+- [x] 크래시 재현 후 자동 재시작 확인 — `docker kill`/`docker exec ... kill -9 1`은 Docker가 "사람이 의도적으로 끔"으로
+      처리해서 재시작 정책이 발동하지 않음(예상된 동작, 버그 아님). 진짜 크래시를 재현하려면 호스트에서
+      `docker inspect -f '{{.State.Pid}}' my-rag-app`로 호스트 PID를 찾아 `sudo kill -9 <pid>`로 직접 죽여야 함
+      (컨테이너 프로세스가 root로 떠서 sudo 필요). 이 방식으로 재현 성공 — 자동 재시작 및 `/health` 정상 복구 확인
 
-실행 결과: UNVERIFIED
+실행 결과: **PASS** (2026-09-09)
 
 ---
 
