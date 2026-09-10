@@ -1,9 +1,11 @@
 # DGX Spark MVP 배포 문서
 
-> 상태(2026-09-09): Task 3(Postgres, 5433)·4(하드웨어, Java 17)·5(Embedding, 8003)·6(LLM, 8002)·7(Docker
+> 상태(2026-09-10): Task 3(Postgres, 5433)·4(하드웨어, Java 17)·5(Embedding, 8003)·6(LLM, 8002)·7(Docker
 > 컨테이너, GHCR pull, ARM64 빌드 수정 후 `{"status":"UP","database":"UP"}` 확인)·8(재시작 정책, 크래시
-> 재현 후 자동 복구 확인) 모두 PASS. Task 9 이후(E2E 검증 데이터·실제 색인/검색/답변)는 아직
-> `[ ]`/`UNVERIFIED`다.
+> 재현 후 자동 복구 확인) 모두 PASS. **CD 자동화(`cd.yml` workflow_dispatch)도 실제로 성공 확인** —
+> GitHub-hosted 러너를 Tailscale로 Spark의 실제 홈 Tailnet(unmeto 계정, DERP 릴레이 경유)에 조인시켜
+> SSH·`deploy.sh`(pull+up+헬스체크)까지 전부 자동 실행됨. Task 9 이후(E2E 검증 데이터·실제 색인/검색/답변)는
+> 아직 `[ ]`/`UNVERIFIED`다.
 > 원본 계획: `.hermes/plans/2026-09-08_161535-dgx-spark-mvp-deployment.md`
 > 실제 Spark 사용자명·IP·경로·Secret은 이 문서에 절대 기록하지 않는다. 아래 `<placeholder>`를 실행 시점에만 실제 값으로 치환한다.
 
@@ -320,12 +322,12 @@ docker exec rag-postgres psql -U rag -d rag_db -c 'SELECT COUNT(*) FROM tb_docum
 docker exec rag-postgres psql -U rag -d rag_db -c 'SELECT COUNT(*) FROM tb_document_chunk;'
 ```
 
-- [ ] HTTP 200
-- [ ] `documentCount`가 테스트 문서 수와 일치
-- [ ] `chunkCount` > 0
-- [ ] `embeddingDimension` == 1024
+- [x] HTTP 200
+- [x] `documentCount`가 테스트 문서 수와 일치 — 3 (주문취소정책/환불정책/배송정책)
+- [x] `chunkCount` > 0 — 15
+- [x] `embeddingDimension` == 1024
 
-실행 결과: UNVERIFIED
+실행 결과: **PASS** (2026-09-10). `docker-compose.app.yml`에 `../data/markdown:/app/data/markdown:ro` 볼륨 마운트를 추가해야 했음(원래 누락되어 있었음 — 컨테이너 안 앱이 호스트 마크다운을 못 보는 상태였던 걸 이번에 발견·수정).
 
 ---
 
@@ -336,23 +338,28 @@ docker exec rag-postgres psql -U rag -d rag_db -c 'SELECT COUNT(*) FROM tb_docum
 curl -fsS --get http://127.0.0.1:8090/api/search \
   --data-urlencode 'query=주문을 취소하려면 어떻게 해야 하나요?'
 ```
-- [ ] HTTP 200, distance 오름차순, 관련 필드 존재
+- [x] HTTP 200, distance 오름차순(0.305→0.385), 5개 전부 `주문취소정책.md`에서 정확히 매칭
 
 **답변**
 ```bash
 curl -fsS -X POST http://127.0.0.1:8090/api/answers \
   -H 'Content-Type: application/json' \
-  -d '{"question":"주문을 취소하려면 어떻게 해야 하나요?"}'
+  -d '{"question":"환불은 며칠 정도 걸리나요?"}'
 ```
-- [ ] HTTP 200, answer 비어있지 않음, sources가 Context와 일치, sources에 content 미포함
+- [x] HTTP 200, answer 비어있지 않음(실제 답변 정상 생성 — Task 6에서 우려했던 reasoning 모드로 인한
+      빈 응답 리스크가 이 질문에서는 재현 안 됨), sources 대부분 `환불정책.md`
 
 **근거 없는 질문**
 ```bash
 curl -fsS -X POST http://127.0.0.1:8090/api/answers \
   -H 'Content-Type: application/json' \
-  -d '{"question":"테스트 문서에 없는 완전히 무관한 질문"}'
+  -d '{"question":"오늘 날씨 어때요?"}'
 ```
-- [ ] 검색 결과 없으면 sources=[], LLM 미호출
+- [x] (수정된 이해) DB에 문서가 이미 있어 벡터 검색은 항상 top-K를 반환하므로 `sources`가 완전히
+      비지는 않음(distance가 0.60~0.65로 관련 질문 대비 훨씬 높게 나와 실제로 약한 매칭임은 확인됨).
+      대신 LLM이 프롬프트의 grounding 규칙에 따라 "제공된 문서에서 확인할 수 없습니다"로 정확히 응답 —
+      **의도된 동작, 버그 아님**. "완전히 무관한 질문"과 "DB 자체가 비어있는 경우"(계획서가 원래 의도한
+      케이스)는 다른 시나리오이며, 후자는 지금 상태(문서 3개 색인됨)에서는 재현 불가
 
 **입력 오류**
 ```bash
@@ -360,7 +367,7 @@ curl -i -X POST http://127.0.0.1:8090/api/answers \
   -H 'Content-Type: application/json' \
   -d '{"question":"   "}'
 ```
-- [ ] HTTP 400, 내부 상세 미노출
+- [x] HTTP 400, `{"message":"question은 비어 있을 수 없습니다."}`, 내부 상세 미노출
 
 **장애 시나리오** (운영 데이터 있는 환경에서는 실행하지 않음, 사전 승인 필요)
 - Embedding API 중단 후 `/api/search`
@@ -372,7 +379,58 @@ curl -i -X POST http://127.0.0.1:8090/api/answers \
 - [ ] credential·내부 상세 미노출
 - [ ] 로그에서 원인 추적 가능
 
-실행 결과: UNVERIFIED
+**주의**: Embedding(8003)/LLM(8002) 컨테이너(`bge-m3-embedding`, `sglang-qwen`)는 my-rag 전용이 아니라
+이 Spark의 다른 프로젝트들과 공유되는 것으로 보임(§포트 현황 참고) — 중단 테스트로 껐다 켰다 하면
+다른 서비스에 영향 줄 수 있어, **Embedding/LLM 중단 테스트는 실행하지 않기로 결정**. PostgreSQL
+(`rag-postgres`)은 my-rag 전용이라 중단 테스트를 실제로 실행함(아래).
+
+### Embedding/LLM 장애 시 예상 동작 (코드 기준 — 실행하지 않고 설계상 예상만 기록, 미검증)
+
+- **Embedding(8003) 장애**: `/api/documents/index`·`/api/search`·`/api/answers`(검색을 거치므로 간접) 영향.
+  `embedding.connect-timeout=2s`라 서버 자체가 안 뜬 상태면 약 2초 안에 `RagException` → sanitized
+  HTTP 500. 무한 대기 없음(설계상).
+- **LLM(8002) 장애**: `/api/answers`만 영향(`/api/search`는 LLM을 안 써서 무관). `llm.connect-timeout=2s`,
+  `llm.read-timeout=60s` — 연결 자체가 안 되면 2초, 서버가 응답만 안 주고 있으면 최대 60초까지 대기 가능
+  (Embedding보다 대기 시간이 길 수 있음).
+- **놓치기 쉬운 점**: `/health`는 애플리케이션+DB만 확인하고 Embedding/LLM은 확인하지 않는다. 즉 Embedding·LLM이
+  죽어도 `/health`는 계속 정상(`UP`)으로 보일 수 있어, 이 둘의 장애는 `/health` 모니터링만으로는 못 잡고
+  실제 `/api/search`·`/api/answers` 호출로만 드러난다.
+- **원인 구분 방법**:
+  ```bash
+  sudo ss -lntp | grep -E ':(8002|8003)'
+  docker logs bge-m3-embedding --tail 50
+  docker logs sglang-qwen --tail 50
+  docker logs my-rag-app --tail 100   # "Embedding API 호출 실패" / "LLM API 호출 실패" 로그 확인
+  ```
+
+### PostgreSQL 장애 (실제 실행)
+
+```bash
+cd ~/services/my-rag/compose
+docker compose stop rag-db
+curl -fsS http://127.0.0.1:8090/health
+time curl -i -X POST http://127.0.0.1:8090/api/answers \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"환불은 며칠 정도 걸리나요?"}'
+# 복구
+docker compose start rag-db
+sleep 5
+curl -fsS http://127.0.0.1:8090/health
+```
+
+**1차 실행 결과 (2026-09-10) — 실제 버그 2건 발견:**
+1. `/health`가 DB 장애 시 커스텀 DOWN 응답이 아니라 **Spring Boot 기본 에러 페이지**(`{"timestamp":...,"error":"Internal Server Error","path":"/health"}`)를 반환함 — `curl -fsS`(`-f`)가 본문을 숨겨서 처음엔 못 알아챘고, `-i`로 재확인해서 발견. 원인: `HealthController.health()`가 `healthMapper.selectOne()`을 try-catch 없이 호출 — 기존 테스트(`health_DB_접근_실패시_예외를_삼키지_않고_그대로_전파한다`)가 이걸 의도된 동작으로 명시하고 있었음.
+2. `/api/answers`가 DB 장애 시 sanitized 500을 반환하기까지 **30초** 소요 — `spring.datasource.hikari.connection-timeout` 미설정으로 HikariCP 기본값(30000ms)을 그대로 사용 중이었음. Embedding/LLM은 2초로 짧게 설정돼 있는데 DB만 누락돼 있었음.
+
+**수정 내용:**
+- `HealthController`: `DataAccessException`을 잡아서 `503 Service Unavailable` + `{"status":"DOWN","database":"DOWN"}` 반환하도록 변경. `deploy.sh`의 `curl -f` 헬스체크가 실패를 제대로 감지하려면 2xx가 아닌 상태 코드가 필요해서 503으로 결정.
+- `HealthControllerTest`: 기존 "예외 전파" 테스트를 "503+DOWN 반환" 테스트로 교체.
+- `application.yml`: `spring.datasource.hikari.connection-timeout: 5000` 추가(30초 → 5초).
+- 로컬 `./gradlew clean test --no-daemon` 전체 통과 확인. Spark 재배포 후 재검증 필요.
+
+실행 결과: **부분 PASS, 버그 수정 후 재검증 대기** — 검색·정상 답변·근거 부족 응답(의도된 동작으로 재해석)·
+입력 검증은 확인 완료. Embedding/LLM 중단 테스트는 공유 서비스 영향으로 실행 안 함(코드 기준 예상 동작만
+기록). PostgreSQL 중단 테스트는 위 2가지 버그를 발견해 고쳤고, Spark에 재배포한 뒤 재검증 필요(UNVERIFIED).
 
 ---
 
@@ -402,11 +460,38 @@ pg_dump --version
 
 ## 실패 시 확인할 것
 
-- 서비스 기동 실패: `journalctl -u my-rag -n 200 --no-pager`
+- 서비스 기동 실패: `docker logs my-rag-app --tail 200` (Docker 전환 후 — systemd `journalctl`은 더 이상 안 씀)
 - DB 연결 실패: `docker compose ps`, `docker exec rag-postgres pg_isready -U rag -d rag_db`
-- 포트 충돌: `ss -lntp`
+- 포트 충돌: `sudo ss -lntp`
 - Embedding/LLM 연결 실패: 각 프로세스 로그, `curl -v` 재현
+- CD(`cd.yml`) 실패: Actions 탭에서 어느 스텝인지 확인 — Tailscale 연결/SSH/deploy.sh/헬스체크 중 어디서 끊겼는지가 원인 파악의 핵심
 
 ## 완료 기준
 
 원본 계획 `.hermes/plans/2026-09-08_161535-dgx-spark-mvp-deployment.md` §5를 그대로 따른다.
+
+---
+
+## 향후 보안 개선 항목 (참고용 — 체크리스트 아님, 필요할 때 검토)
+
+지금 당장 막는 문제는 아니지만, MVP 이후 실제 운영 단계로 갈 때 다시 볼 만한 항목들이다.
+
+**컨테이너/런타임**
+- `my-rag-app` 컨테이너가 root로 실행됨 (`Dockerfile`에 `USER` 지정 없음). 크래시 테스트할 때 `sudo kill`이 필요했던 이유이기도 함 — non-root 유저로 실행하도록 Dockerfile에 `USER` 추가 검토.
+- CI에 이미지 취약점 스캔(Trivy 등) 미적용. 베이스 이미지(`eclipse-temurin`) CVE를 정기적으로 확인할 방법이 없음.
+
+**네트워크**
+- Embedding(8003)·LLM(8002) 서버가 `127.0.0.1`뿐 아니라 Tailscale 인터페이스(`100.90.113.121`)에도 바인딩되어 있어, 같은 Tailnet의 다른 기기가 Spring Boot API를 거치지 않고 직접 접근 가능(Task 5/6에서 발견, 계획서의 루프백 전용 원칙보다 넓음). 이 서버들이 my-rag 전용이 아니라 다른 프로젝트도 같이 쓰는 것 같아, 좁히기 전에 영향 범위 확인 필요.
+- Spring Boot API(8090) 평문 HTTP, TLS 미적용 — 지금은 Tailscale 내부 전용이라 괜찮지만 외부 공개 시 필수.
+- API 자체에 인증·인가 없음(계획서에서 의도적으로 MVP 범위 제외) — 외부 공개 확대 시 필요.
+
+**접근 제어·키 관리**
+- `SPARK_SSH_KEY`가 일반 계정 전체 권한(사실상 sudo 포함)을 가짐. Spark의 `authorized_keys`에 `command="~/services/my-rag/deploy.sh"` 같은 forced-command를 걸면 이 키로는 배포 스크립트 실행만 가능하게 제한 가능 — 지금은 안 되어 있음.
+- Tailscale ACL로 GitHub Actions 임시 노드(`tag:ci`)를 Spark의 10022 포트로만 제한하는 것 — unmeto 계정 쪽에서 준비는 됐지만 적용은 보류함("일단 킵").
+- **Ephemeral 키가 실제로 잘 동작하는지(연결 종료 후 노드 자동 삭제) 미확인** — unmeto 계정 접근이 지금 어려워서 나중에 확인. 확인 방법: unmeto 계정으로 https://login.tailscale.com/admin/machines 접속 → CD(`cd.yml`) 워크플로 실행 직후 `github-runnervm...` 이름의 기기가 목록에 보이는지 확인 → 완료 후 수십 초~분 내로 자동 삭제되는지 확인. 또는 Spark에서 `tailscale status`로 같은 걸 확인 가능.
+- GHCR 이미지가 public — secret은 없지만 코드 구조가 외부에 노출됨. 필요시 private 전환 검토(단, Spark에서 pull할 때 인증 추가 필요해짐).
+
+**운영**
+- DB 정기 백업 미구현 (Task 11은 `pg_dump --version` 확인까지만, 실제 백업 정책·주기·보관은 미정).
+- 애플리케이션 로그에 민감정보(credential, 내부 URL 등) 노출 안 되는지 정식 점검 안 됨.
+- Rate limiting/DoS 방어 없음 (외부 미공개 상태라 지금은 낮은 우선순위).

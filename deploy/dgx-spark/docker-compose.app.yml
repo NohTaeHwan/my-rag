@@ -16,4 +16,9 @@ services:
     network_mode: host
     env_file:
       - ../config/my-rag.env
+    volumes:
+      # 호스트의 색인 대상 마크다운을 컨테이너의 기본 document.source-directory(data/markdown,
+      # WORKDIR /app 기준 상대경로)에 그대로 마운트한다. 읽기 전용(ro) — 색인 시 앱이 이 디렉터리를
+      # 쓰지 않고 읽기만 한다.
+      - ../data/markdown:/app/data/markdown:ro
     restart: unless-stopped
