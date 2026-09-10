@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# EXAMPLE — Spark 실접속 방식 확정 후 실제 값으로 채워서 사용한다.
-# GitHub Actions cd.yml이 SSH로 이 스크립트를 실행한다고 가정한다.
-# 이미지는 로컬 전송이 아니라 GHCR(ghcr.io/nohtaehwan/my-rag)에서 직접 pull한다.
-# Docker Compose 파일: deploy/dgx-spark/docker-compose.app.yml 참고.
+# 실제 배포 스크립트. GitHub Actions cd.yml이 이 파일을 Spark로 scp한 뒤 SSH로 실행한다
+# (즉 이 저장소에 있는 내용이 곧 Spark에서 실행되는 내용이다 — 별도로 손으로 동기화할 필요 없음).
+# 이미지는 GHCR(ghcr.io/nohtaehwan/my-rag)에서 pull한다.
+# Docker Compose 파일: deploy/dgx-spark/docker-compose.app.yml (Spark의 compose/ 디렉터리에 위치).
 #
-# 실행 전 사람이 직접 확인할 것:
-#   - <deploy-directory>, <app-health-url> 이 실제 값으로 치환되었는지
+# 필수 환경변수 (cd.yml이 SSH 실행 시 주입, 로컬에서 수동 실행할 때도 직접 지정):
+#   DEPLOY_DIR — Spark 배포 루트 디렉터리 (예: /home/<user>/services/my-rag)
+#   HEALTH_URL — 배포 후 확인할 헬스체크 URL (예: http://127.0.0.1:8090/health)
 set -euo pipefail
 
-DEPLOY_DIR="<deploy-directory>"
+: "${DEPLOY_DIR:?DEPLOY_DIR 환경변수가 필요합니다}"
+: "${HEALTH_URL:?HEALTH_URL 환경변수가 필요합니다}"
+
 COMPOSE_FILE="${DEPLOY_DIR}/compose/docker-compose.app.yml"
 IMAGE="ghcr.io/nohtaehwan/my-rag:latest"
-HEALTH_URL="<app-health-url>"
 
 # 롤백용으로 현재 이미지를 previous 태그로 보존
 CURRENT_ID=$(docker compose -f "${COMPOSE_FILE}" images -q my-rag-app 2>/dev/null || true)

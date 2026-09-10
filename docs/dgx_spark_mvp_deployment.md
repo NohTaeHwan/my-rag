@@ -1,11 +1,18 @@
 # DGX Spark MVP 배포 문서
 
-> 상태(2026-09-10): Task 3(Postgres, 5433)·4(하드웨어, Java 17)·5(Embedding, 8003)·6(LLM, 8002)·7(Docker
-> 컨테이너, GHCR pull, ARM64 빌드 수정 후 `{"status":"UP","database":"UP"}` 확인)·8(재시작 정책, 크래시
-> 재현 후 자동 복구 확인) 모두 PASS. **CD 자동화(`cd.yml` workflow_dispatch)도 실제로 성공 확인** —
-> GitHub-hosted 러너를 Tailscale로 Spark의 실제 홈 Tailnet(unmeto 계정, DERP 릴레이 경유)에 조인시켜
-> SSH·`deploy.sh`(pull+up+헬스체크)까지 전부 자동 실행됨. Task 9 이후(E2E 검증 데이터·실제 색인/검색/답변)는
-> 아직 `[ ]`/`UNVERIFIED`다.
+> 상태(2026-09-10): **Task 3~11 전부 PASS — 계획서의 배포 검증 절차 완료.** Postgres·하드웨어/Java17·
+> Embedding·LLM·Docker 배포(GHCR pull, ARM64 빌드 수정)·재시작 정책·E2E 검증 데이터·검색/답변/장애
+> 시나리오·운영 최소 점검까지 전부 확인. CD 자동화도 완성 — `ci.yml` 성공 시 `workflow_run`으로
+> `cd.yml` 자동 트리거, `prd-spark` Environment의 Required reviewer 승인(처음엔 설정이 빠져있던 걸
+> 발견해 수정) 이후 Tailscale 연결·SSH·`deploy.sh`(pull+up+헬스체크)까지 자동 실행 확인. 과정에서 실제
+> 버그 2건(헬스체크 미처리 예외, DB 타임아웃 30초) 발견·수정·재배포·재검증 완료, `my-rag-app`이 모든
+> 인터페이스에 열려 있다는 것도 확인(§향후 보안 개선 항목 — HTTPS/도메인/인증과 함께 나중에 처리하기로 결정).
+>
+> **코드리뷰 반영 (2026-09-10)**: `deploy/dgx-spark/deploy.example.sh`(placeholder 포함)를 Spark에
+> 수동으로 복사·치환해 쓰던 방식에서, **`deploy/dgx-spark/deploy.sh`를 실제 실행 스크립트로 전환**해
+> `cd.yml`이 매 배포마다 이 파일을 Spark로 scp해서 덮어쓰도록 바꿨다(`DEPLOY_DIR`/`HEALTH_URL`은
+> 환경변수로 주입, placeholder 제거). 이제 저장소가 실제 배포 스크립트의 유일한 원본이다. Task 3
+> 체크리스트가 실제로는 통과했는데 문서에 UNVERIFIED로 남아있던 것도 함께 바로잡음.
 > 원본 계획: `.hermes/plans/2026-09-08_161535-dgx-spark-mvp-deployment.md`
 > 실제 Spark 사용자명·IP·경로·Secret은 이 문서에 절대 기록하지 않는다. 아래 `<placeholder>`를 실행 시점에만 실제 값으로 치환한다.
 
@@ -99,12 +106,12 @@ docker exec rag-postgres pg_isready -U rag -d rag_db
 docker exec rag-postgres psql -U rag -d rag_db -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
 ```
 
-- [ ] `docker compose ps`에서 rag-postgres healthy
-- [ ] `pg_isready` → accepting connections
-- [ ] vector extension 존재
-- [ ] 5432가 아닌 5433에 바인딩됨 (`docker ps` 포트 컬럼 확인)
+- [x] `docker compose ps`에서 rag-postgres healthy
+- [x] `pg_isready` → accepting connections
+- [x] vector extension 존재
+- [x] 5432가 아닌 5433에 바인딩됨 (`127.0.0.1:5433->5432/tcp` 확인)
 
-실행 결과: UNVERIFIED
+실행 결과: **PASS** (2026-09-09, Task 9 문서 색인·Task 10 검색/답변에서 계속 정상 사용 확인됨)
 
 ---
 
@@ -243,7 +250,7 @@ docker push ghcr.io/nohtaehwan/my-rag:latest
 ```
 `main`에 push하면 `ci.yml`이 위 과정을 자동으로 해준다 — 수동 빌드는 긴급 상황에서만 필요하다.
 
-**4. 운영 환경변수 파일** (Spark, `~/services/my-rag/config/my-rag.env` — 이미 Task 7 JAR 검증 때 만든 것 그대로 재사용 가능)
+**4. 운영 환경변수 파일** (Spark, `~/services/my-rag/config/my-rag.env` — 이미 Task 7 JAR 검증 때 만든 것 그대로 재사용 가능, 예시 템플릿은 `deploy/dgx-spark/my-rag.env.example` 참고)
 ```text
 DB_URL=jdbc:postgresql://127.0.0.1:5433/rag_db
 DB_USERNAME=rag
@@ -374,10 +381,10 @@ curl -i -X POST http://127.0.0.1:8090/api/answers \
 - LLM API 중단 후 `/api/answers`
 - PostgreSQL 중단 후 `/health`, API 호출
 
-- [ ] timeout 후 무한 대기 없음
-- [ ] HTTP 500 sanitized message
-- [ ] credential·내부 상세 미노출
-- [ ] 로그에서 원인 추적 가능
+> 아래 각 항목의 실제 검증 결과는 이 하위 3가지(Embedding/LLM 중단 시 예상 동작, PostgreSQL 중단 실제
+> 실행)를 다루는 각 섹션에 개별적으로 기록한다. 위 4가지 공통 기준(무한 대기 없음/sanitized 500/
+> credential 미노출/로그 추적 가능)은 실행한 PostgreSQL 케이스에서만 실제로 확인했다 — 아래
+> "PostgreSQL 장애 (실제 실행)" 섹션 참고.
 
 **주의**: Embedding(8003)/LLM(8002) 컨테이너(`bge-m3-embedding`, `sglang-qwen`)는 my-rag 전용이 아니라
 이 Spark의 다른 프로젝트들과 공유되는 것으로 보임(§포트 현황 참고) — 중단 테스트로 껐다 켰다 하면
@@ -426,35 +433,47 @@ curl -fsS http://127.0.0.1:8090/health
 - `HealthController`: `DataAccessException`을 잡아서 `503 Service Unavailable` + `{"status":"DOWN","database":"DOWN"}` 반환하도록 변경. `deploy.sh`의 `curl -f` 헬스체크가 실패를 제대로 감지하려면 2xx가 아닌 상태 코드가 필요해서 503으로 결정.
 - `HealthControllerTest`: 기존 "예외 전파" 테스트를 "503+DOWN 반환" 테스트로 교체.
 - `application.yml`: `spring.datasource.hikari.connection-timeout: 5000` 추가(30초 → 5초).
-- 로컬 `./gradlew clean test --no-daemon` 전체 통과 확인. Spark 재배포 후 재검증 필요.
+- 로컬 `./gradlew clean test --no-daemon` 전체 통과 확인 후 Spark에 재배포, 재검증 완료:
+  ```
+  {"database":"DOWN","status":"DOWN"}   # /health, 503
+  {"message":"답변 생성에 실패했습니다."}  # /api/answers, HTTP 500, 5.291s(기존 30초 대비 개선)
+  ```
 
-실행 결과: **부분 PASS, 버그 수정 후 재검증 대기** — 검색·정상 답변·근거 부족 응답(의도된 동작으로 재해석)·
-입력 검증은 확인 완료. Embedding/LLM 중단 테스트는 공유 서비스 영향으로 실행 안 함(코드 기준 예상 동작만
-기록). PostgreSQL 중단 테스트는 위 2가지 버그를 발견해 고쳤고, Spark에 재배포한 뒤 재검증 필요(UNVERIFIED).
+실행 결과: **PASS** (2026-09-10, 수정·재배포·재검증까지 완료) — 검색·정상 답변·근거 부족 응답(의도된 동작으로
+재해석)·입력 검증·PostgreSQL 중단 복구 전부 확인. Embedding/LLM 중단 테스트는 공유 서비스 영향으로
+실행 안 함(코드 기준 예상 동작만 기록, §위 참고).
 
 ---
 
 ## Task 11 — 운영 최소 점검
 
 ```bash
-docker compose ps
-systemctl is-active my-rag
-ss -lntp
+docker compose -f ~/services/my-rag/compose/docker-compose.yml ps
+docker compose -f ~/services/my-rag/compose/docker-compose.app.yml ps
+sudo ss -lntp
 free -h
 df -h
 nvidia-smi
 pg_dump --version
 ```
 
-- [ ] PostgreSQL healthy, Spring Boot active
-- [ ] Embedding/LLM active 또는 외부 endpoint 접근 가능
-- [ ] 5433/8003/8002 외부 미공개
-- [ ] 디스크·GPU 메모리 여유 확인
-- [ ] 애플리케이션 로그 위치·보존 기준 확인
+- [x] PostgreSQL(`rag-postgres`) healthy, Spring Boot(`my-rag-app`) Up
+- [x] Embedding/LLM active — `sglang::scheduler`(87GB GPU 메모리), bge-m3-embedding 정상 확인
+- [x] 5433/8003/8002 확인 — DB(5433)는 `127.0.0.1`만. 8003/8002는 my-rag 전용 아니라서 Tailscale
+      인터페이스에도 열려 있는 상태(§포트 현황·향후 보안 개선 항목 참고, 새로 발견한 문제 아님)
+- [x] **신규 발견**: `my-rag-app`(8090) 자체가 `network_mode: host` + Spring Boot 기본 바인딩(0.0.0.0)
+      때문에 `*:8090`으로 모든 인터페이스에 열려 있음 — `ss -lntp`로 확인. Tailnet의 다른 기기가
+      인증 없이 API 호출 가능. 사용자 판단: **나중에 실제 서비스화할 때 HTTPS 인증서·도메인
+      라우팅·API 인증을 한 번에 같이 처리하기로 결정** — 지금은 손대지 않음(§향후 보안 개선 항목에 추가)
+- [x] 디스크·GPU 메모리 여유 확인 — 디스크 3.2T 여유, GPU는 기존 sglang 87GB 사용 중이나 정상 범위
+- [x] 애플리케이션 로그 위치·보존 기준 확인 — `docker logs my-rag-app`뿐(컨테이너 재생성 시 사라짐,
+      영구 보존 필요하면 로그 드라이버/볼륨 마운트 추가 검토 — 향후 개선 항목)
+- [x] `pg_dump` 확인 — 호스트에는 없지만 `rag-postgres` 컨테이너 안에 포함(`docker exec rag-postgres
+      pg_dump --version` → PostgreSQL 17.11). 실제 백업 정책(저장 위치·보존 기간)은 미정, 지금 실행 안 함
 
 실제 백업은 저장 위치·보존 기간·민감 데이터 처리 방식을 정한 뒤 실행한다. 운영 DB에서 무계획 dump 생성 금지. `docker compose down -v`는 기본 절차에 포함하지 않는다(데이터 삭제 명령).
 
-실행 결과: UNVERIFIED
+실행 결과: **PASS** (2026-09-10)
 
 ---
 
@@ -482,8 +501,8 @@ pg_dump --version
 
 **네트워크**
 - Embedding(8003)·LLM(8002) 서버가 `127.0.0.1`뿐 아니라 Tailscale 인터페이스(`100.90.113.121`)에도 바인딩되어 있어, 같은 Tailnet의 다른 기기가 Spring Boot API를 거치지 않고 직접 접근 가능(Task 5/6에서 발견, 계획서의 루프백 전용 원칙보다 넓음). 이 서버들이 my-rag 전용이 아니라 다른 프로젝트도 같이 쓰는 것 같아, 좁히기 전에 영향 범위 확인 필요.
-- Spring Boot API(8090) 평문 HTTP, TLS 미적용 — 지금은 Tailscale 내부 전용이라 괜찮지만 외부 공개 시 필수.
-- API 자체에 인증·인가 없음(계획서에서 의도적으로 MVP 범위 제외) — 외부 공개 확대 시 필요.
+- **확인됨(Task 11, 2026-09-10)**: `my-rag-app`(8090)이 `network_mode: host`+Spring Boot 기본 바인딩(0.0.0.0) 때문에 `*:8090`으로 모든 인터페이스에 열려 있음(`ss -lntp`로 확인) — Tailnet의 다른 기기가 인증 없이 API 호출 가능. Spring Boot API(8090) 평문 HTTP, TLS도 미적용. **사용자 결정: 나중에 실제 서비스화할 때 HTTPS 인증서·도메인 라우팅·API 인증을 한 번에 같이 처리하기로 함** — 지금 MVP 단계에서는 손대지 않음.
+- API 자체에 인증·인가 없음(계획서에서 의도적으로 MVP 범위 제외) — 위 항목과 같이 처리 예정.
 
 **접근 제어·키 관리**
 - `SPARK_SSH_KEY`가 일반 계정 전체 권한(사실상 sudo 포함)을 가짐. Spark의 `authorized_keys`에 `command="~/services/my-rag/deploy.sh"` 같은 forced-command를 걸면 이 키로는 배포 스크립트 실행만 가능하게 제한 가능 — 지금은 안 되어 있음.
@@ -495,3 +514,28 @@ pg_dump --version
 - DB 정기 백업 미구현 (Task 11은 `pg_dump --version` 확인까지만, 실제 백업 정책·주기·보관은 미정).
 - 애플리케이션 로그에 민감정보(credential, 내부 URL 등) 노출 안 되는지 정식 점검 안 됨.
 - Rate limiting/DoS 방어 없음 (외부 미공개 상태라 지금은 낮은 우선순위).
+
+---
+
+## 향후 CI/CD·DevOps 개선 항목 (참고용 — 체크리스트 아님, 필요할 때 검토)
+
+지금 규모(개인 프로젝트, Spark 한 대)에서는 급한 게 없지만, 서비스가 커지거나 사용자가 늘면 순서대로 볼 만한 항목들이다.
+
+**배포 안정성**
+- `deploy.sh`의 롤백이 `latest`/`previous` 딱 두 슬롯뿐 — 커밋 SHA 기준으로 이미지를 버전 관리하고 "이 SHA로 롤백"하는 방식이 더 견고함(2단계 이전으로는 지금 구조로 못 돌아감).
+- 무중단 배포 아님 — 재배포 시 몇 초 다운타임 발생. 필요해지면 blue-green이나 "새 컨테이너 healthy 확인 후 기존 종료" 방식 검토.
+- `cd.yml`에 concurrency 제어 없음(`ci.yml`엔 있음) — 짧은 간격으로 여러 커밋이 푸시되면 배포가 겹쳐 돌 수 있음.
+
+**관측성(Observability)**
+- 모니터링/알림 체계 없음 — 서비스가 죽어도 능동적으로 알려주는 게 없음(Slack/Discord webhook, uptime 체크 서비스 등). 지금은 사람이 수동 확인해야 함.
+- 로그가 휘발성 — `docker logs`뿐이라 컨테이너 재생성되면 사라짐. 중앙 로그 수집(Loki 등)이나 최소한 파일 볼륨 마운트 필요.
+- 배포 실패 시 알림 없음 — `deploy.sh` 실패는 GitHub Actions 페이지에서만 보임.
+
+**보안/권한 (CI/CD 관점)**
+- Tailscale ACL로 CI 임시 노드(`tag:ci`) 범위를 Spark 하나로 좁히는 것 — unmeto 계정 쪽에서 준비는 됐지만 적용 보류 중(§향후 보안 개선 항목과 동일 항목).
+- Secret 순환(rotation) 정책 없음 — SSH 키·Tailscale authkey 등을 정기적으로 교체하는 프로세스 없음.
+- Required reviewer가 본인 1명뿐 — 개인 프로젝트라 문제없지만 팀 규모 커지면 승인자 이중화 고려.
+
+**테스트/검증**
+- CI는 Mock 기반이라 실제 LLM 동작 변동성(Task 6/10에서 발견한 reasoning 모드로 인한 빈 응답 리스크 등)을 못 잡음 — 배포 후 정기적인 실제 smoke test 자동화 여지.
+- `build` job이 `push to main`에만 걸려 있어 PR 단계에서는 Docker 이미지 빌드 자체가 되는지 미리 확인 안 됨.

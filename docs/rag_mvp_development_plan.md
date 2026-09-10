@@ -446,15 +446,29 @@ POST /api/answers
 
 ### 8단계. 테스트와 운영 준비
 
-- [ ] Chunking 단위 테스트
-- [ ] Embedding API Client 테스트
-- [ ] 검색 Repository 테스트
-- [ ] 문서 색인 통합 테스트
-- [ ] 질문·검색·답변 E2E 테스트
-- [ ] Embedding 서버 장애 테스트
-- [ ] DB 백업 방식 정리
-- [ ] 로그와 요청 식별자 추가
-- [ ] Docker Compose로 로컬 실행 정리
+> 2026-09-10 확인: 이 체크리스트가 실제 코드 상태와 어긋나 있었음(다른 단계 진행하면서 이미 끝난 항목들의
+> 체크박스가 갱신 안 됨). 실제 코드·테스트 존재 여부와 DGX Spark 배포 검증(`docs/dgx_spark_mvp_deployment.md`)
+> 기준으로 재확인.
+
+- [x] Chunking 단위 테스트 — `MarkdownChunkerTest.java`
+- [x] Embedding API Client 테스트 — `EmbeddingClientTest.java`
+- [x] 검색 Repository 테스트 — `DocumentChunkRepositoryTest.java` 등
+- [x] 문서 색인 통합 테스트 — `DocumentPersistenceIntegrationTest.java`
+- [x] 질문·검색·답변 E2E 테스트 — `AnswerControllerTest` 등 + DGX Spark 실배포 E2E(Task 9·10)
+- [x] Embedding 서버 장애 테스트 — `EmbeddingClientTest.embed_throwsRagException_whenApiCallFails`
+- [x] DB 백업 방식 정리(도구 확인 수준) — `docker exec rag-postgres pg_dump --version` 확인(Task 11).
+      **단, 실제 백업 스크립트·주기·보관 정책은 아직 없음** — 별도 항목으로 아래에 분리
+- [x] 로그와 요청 식별자 추가 — `RequestIdFilter`(`OncePerRequestFilter`)가 요청마다 ID를 발급해 MDC에
+      넣고 응답 헤더로도 반환. `logback-spring.xml`을 새로 추가해 콘솔 로그 패턴에 `[%X{requestId}]`를
+      포함시킴(Spring Boot 기본 패턴은 유지, 요청 ID만 추가).
+      **코드리뷰 반영(2026-09-10)**: 클라이언트가 보낸 `X-Request-Id`를 검증 없이 그대로 쓰던 것을
+      `[A-Za-z0-9_-]{1,128}` 패턴 검증으로 강화(log forging·과도한 길이 방지, 무효값은 새 UUID로 대체).
+      MDC 처리도 단순 `remove` 대신 진입 시점의 기존 MDC 값을 저장해두었다가 요청 종료 후(예외 발생
+      경로 포함) 원래 값으로 복원하도록 개선.
+      `RequestIdFilterTest`(단위, 8개) + `RequestIdFilterIntegrationTest`(`@WebMvcTest`, 4개) +
+      `./gradlew bootRun`으로 헤더 없음/유효/무효(공백·특수문자·길이초과)/로그 누수 없음까지 실제 확인(2026-09-10).
+- [x] Docker Compose로 로컬 실행 정리 — 이미 되어 있음(`docker-compose.yml`)
+- [ ] **(신규 분리) DB 백업 실제 정책 수립·구현** — 저장 위치·주기·보관 기간을 정하고 실제 백업 스크립트/cron 작성. 도구 존재 확인과는 별개.
 
 ## 4. 지금 바로 시작할 작업
 
