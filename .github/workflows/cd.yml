@@ -32,12 +32,17 @@ jobs:
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
+      - name: Verify Tailscale reachability to Spark
+        run: |
+          tailscale status
+          tailscale ping -c 3 "${{ secrets.SPARK_HOST }}"
+
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SPARK_SSH_KEY }}" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -p 10022 -H "${{ secrets.SPARK_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -v -T 15 -p 10022 -H "${{ secrets.SPARK_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Run protected deploy script on Spark
         run: |
