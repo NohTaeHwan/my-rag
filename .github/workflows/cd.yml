@@ -1,5 +1,6 @@
-# EXAMPLE / UNVERIFIED — 사람이 workflow_dispatch로 수동 실행할 때만 동작한다.
-# 자동 트리거(main push, tag)는 의도적으로 넣지 않았다.
+# CI(ci.yml)가 main에서 성공하면 자동으로 트리거된다. 다만 prd-spark Environment의
+# Required reviewer 승인이 있어야 실제 배포 스텝이 진행되므로, "자동 트리거 + 사람 승인"
+# 구조는 유지된다. 필요하면 workflow_dispatch로 수동 재실행도 가능하다.
 #
 # 사전 준비 (GitHub 저장소 Settings에서 사람이 직접 설정):
 #   1. Settings > Environments > New environment "prd-spark" 생성, Required reviewer 지정
@@ -18,12 +19,16 @@ name: CD (DGX Spark)
 
 on:
   workflow_dispatch: {}
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
 
 permissions:
   contents: read
 
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     environment: prd-spark
     steps:
