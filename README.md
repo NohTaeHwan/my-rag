@@ -64,7 +64,7 @@ set -a; source .env; set +a
 | `EMBEDDING_MODEL` | 아니오 | `BAAI/bge-m3` | Embedding 모델명 |
 | `EMBEDDING_DIMENSION` | 아니오 | `1024` | 기대하는 벡터 차원 |
 | `RETRIEVAL_TOP_K` | 아니오 | `5` | 검색 API가 반환할 최대 결과 수 (1~50) |
-| `LLM_BASE_URL` | **예** | `http://127.0.0.1:8001/v1` | OpenAI-compatible LLM API base URL (`/v1` 포함) |
+| `LLM_BASE_URL` | **예** | `http://127.0.0.1:8002/v1` | OpenAI-compatible LLM API base URL (`/v1` 포함) |
 | `LLM_MODEL` | 아니오 | `local-model` | 사용할 LLM 모델 id |
 | `LLM_API_KEY` | 아니오 | (빈 문자열) | LLM API Key. 있으면 `Authorization: Bearer` 헤더로 전송, 없으면 헤더 생략 |
 | `LLM_MAX_CONTEXT_CHARS` | 아니오 | `12000` | LLM prompt에 넣을 검색 근거의 최대 문자 수 |
@@ -103,7 +103,8 @@ com.nohtaehwan.rag
 ├─ RagBackendApplication.java   # 엔트리 포인트
 ├─ HealthController.java        # 헬스체크 (HealthMapper 사용, Swagger 문서에서는 @Hidden)
 ├─ config/
-│   └─ SwaggerConfig.java       # OpenAPI/Swagger UI 설정
+│   ├─ SwaggerConfig.java       # OpenAPI/Swagger UI 설정
+│   └─ RequestIdFilter.java     # 요청마다 ID 발급, MDC·응답 헤더(X-Request-Id)에 반영, 로그 추적용
 ├─ health/mapper/
 │   └─ HealthMapper.java        # @Select("SELECT 1")
 ├─ document/                    # Markdown 수집·파싱·Chunking
@@ -161,6 +162,8 @@ com.nohtaehwan.rag
 ```
 
 MyBatis mapper는 XML을 쓰지 않고 인터페이스 메서드 위에 SQL을 직접 붙이는 annotation 방식(`@Select`/`@Insert`/`@Delete`)입니다. 문서 수만큼 늘어나는 chunk batch insert처럼 정적 SQL로 표현이 안 되는 경우만 `@InsertProvider` + SQL을 만드는 순수 Java 클래스(`DocumentChunkSqlProvider`)를 씁니다.
+
+로그는 `src/main/resources/logback-spring.xml`에서 설정합니다. Spring Boot 기본 콘솔 포맷을 그대로 쓰되, `RequestIdFilter`가 채운 요청 ID를 `[%X{requestId}]`로 모든 로그 줄에 포함시켜, 동시 요청이 섞여도 로그에서 요청 단위로 추적할 수 있습니다.
 
 진행 상황은 [`docs/rag_mvp_development_plan.md`](docs/rag_mvp_development_plan.md)에서 단계별로 확인할 수 있습니다.
 
@@ -251,6 +254,21 @@ GET /api/search?query=결제 취소 방법
 - 검색·LLM 호출을 DB 트랜잭션으로 묶지 않는다(읽기 전용 흐름).
 - 실패 응답은 상세 원인(URL·API Key·prompt·SQL 등)을 노출하지 않고 `{"message": "..."}`만 반환한다.
 
+## 배포
+
+`Dockerfile`(멀티스테이지: `eclipse-temurin:17-jdk` 빌드 → `eclipse-temurin:17-jre` 실행)로 컨테이너 이미지를 만듭니다.
+
+```bash
+docker build -t my-rag:latest .
+```
+
+GitHub Actions로 CI/CD가 구성되어 있습니다.
+
+- `.github/workflows/ci.yml` — PR·`main` push마다 테스트 실행, `main` push 성공 시 ARM64 이미지를 빌드해 GitHub Container Registry(`ghcr.io/nohtaehwan/my-rag`)에 `latest`/커밋 SHA 태그로 push
+- `.github/workflows/cd.yml` — CI 성공 시 자동 트리거(사람 승인 후 진행), Tailscale로 배포 대상 서버에 접속해 최신 이미지를 pull·재기동·헬스체크
+
+실제 DGX Spark 배포 절차(하드웨어 점검부터 Docker Compose 구성, 실패 시 확인 방법, 알려진 보안/운영 리스크까지)는 [`docs/dgx_spark_mvp_deployment.md`](docs/dgx_spark_mvp_deployment.md)에 정리되어 있습니다.
+
 ## 참고 문서
 
 | 문서 | 내용 |
@@ -258,5 +276,6 @@ GET /api/search?query=결제 취소 방법
 | [`docs/rag_mvp_development_plan.md`](docs/rag_mvp_development_plan.md) | 개발 단계별 계획과 진행 체크리스트 |
 | [`docs/rag_backend_developer.md`](docs/rag_backend_developer.md) | RAG 백엔드 개발 개념 정리 |
 | [`docs/local_embedding_model_setup_dgx_spark.md`](docs/local_embedding_model_setup_dgx_spark.md) | DGX Spark BGE-M3 Embedding 서버 구성 가이드 |
+| [`docs/dgx_spark_mvp_deployment.md`](docs/dgx_spark_mvp_deployment.md) | DGX Spark 실배포 절차·검증 결과·CI/CD 구성·알려진 리스크 |
 | [`docs/claude_kit_development_checklist.md`](docs/claude_kit_development_checklist.md) | 기능 개발 시 준수 체크리스트 템플릿 |
 | [`docs/checklists/`](docs/checklists) | 작업별 체크리스트 작성 기록 |

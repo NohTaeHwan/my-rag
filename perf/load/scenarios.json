@@ -1,0 +1,25 @@
+{
+  "search": {
+    "smoke":  { "vus": 1,  "duration": "30s" },
+    "warm":   { "vus": 5,  "duration": "1m" },
+    "load":   { "vus": 10, "duration": "2m" },
+    "stress": { "vus": 25, "duration": "2m" },
+    "soak":   { "vus": 8,  "duration": "15m" }
+  },
+  "search_query_mix": {
+    "gold": 0.70,
+    "paraphrase": 0.15,
+    "keyword_identifier": 0.10,
+    "unanswerable": 0.05
+  },
+  "answer": {
+    "smoke": { "vus": 1,  "duration": "20s" },
+    "warm":  { "vus": 3,  "duration": "30s" },
+    "load":  { "vus": 10, "duration": "1m" }
+  },
+  "notes": {
+    "saturation": "1차에서는 제외한다 — DB 커넥션 풀 기본값(10)과 공유 GPU 한계로 장애 재현 위험이 있어, 별도 승인 후 진행한다.",
+    "soak_duration": "계획서 권장 30분+ 대신 15분으로 축소 — connection leak 등의 징후는 10분 안팎에서도 나타난다는 판단.",
+    "answer_load_cap": "LLM은 검색보다 훨씬 무겁고(질의당 5~15초) 공유 GPU를 쓰므로 Load(10)까지만 진행한다."
+  }
+}

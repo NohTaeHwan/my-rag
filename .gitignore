@@ -29,3 +29,14 @@ application-*.local.yml
 
 # Hermes local plans and runtime files
 .hermes/
+
+# perf 평가 산출물 (재생성 가능한 대량 데이터/원시 결과, 커밋 대상 아님)
+# perf/dataset/queries.jsonl(사람이 검토한 최종 gold set)은 예외로 추적한다.
+perf/dataset/generated*/
+perf/dataset/queries_*.jsonl
+perf/dataset/*.resolved.jsonl
+perf/results/*.json
+perf/results/**/*.json
+perf/results/charts/
+__pycache__/
+*.pyc
