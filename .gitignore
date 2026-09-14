@@ -40,3 +40,4 @@ perf/results/**/*.json
 perf/results/charts/
 __pycache__/
 *.pyc
+docs/rag_performance_results.md
