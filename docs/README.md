@@ -11,8 +11,8 @@
 | 프로젝트 소개·실행·API | [README.md](../README.md) | 기술 스택, 실행 방법, API와 프로젝트 구조를 설명한다. |
 | 현재 MVP 단계·다음 작업 | [rag_mvp_development_plan.md](rag_mvp_development_plan.md) | RAG MVP의 구현 단계와 챗봇 구현 후 재평가 항목을 기록한다. |
 | MVP 성능·품질 평가 | [rag_performance_results.md](rag_performance_results.md) | 합성 데이터 기반 평가 수치·병목·한계와 후속 재평가 계획을 정리한다(로컬 전용). |
-| 개인용 챗봇 설계 | [personal_rag_chatbot_design.md](personal_rag_chatbot_design.md) | 사용자·Knowledge Base·업로드·Memory의 데이터 모델과 API 요청·응답 구조를 정리한다(미추적). |
-| 개인용 챗봇 구현 순서 | [구현 계획](../.hermes/plans/2026-09-21_151055-personal-rag-chatbot-implementation.md) | Phase 0 이후 사용자별 범위 확장부터 웹 UI·통합 검증까지 단계별로 정리한다(로컬 전용). |
+| 문서 기반 RAG 챗봇 설계 | [personal_rag_chatbot_design.md](personal_rag_chatbot_design.md) | 범용(도메인 무관) RAG 챗봇의 사용자·Knowledge Base·업로드 데이터 모델과 API 명세를 정리한다. Memory·대화 요약은 후순위 선택 기능으로 분리했다(미추적). |
+| 문서 기반 RAG 챗봇 구현 순서 | [구현 계획](../.hermes/plans/2026-09-21_151055-personal-rag-chatbot-implementation.md) | Phase 1~4(핵심: 사용자별 KB 범위 확장→업로드→답변→동시성 제어) 이후 Memory/요약(선택)·웹 UI·통합 검증까지 단계별로 정리한다(로컬 전용). |
 
 ## 개념·설계·개발 규칙 (`docs/`, 루트)
 
