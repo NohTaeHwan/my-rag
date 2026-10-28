@@ -1,5 +1,7 @@
 # DGX Spark MVP 배포 문서
 
+> **2026-10-23 변경 주의:** 아래 PASS 기록은 당시 배포 검증의 이력이다. 현재 개발 중인 앱 설정은 Flyway 자동 적용을 기본 비활성화하고 `DB_APP_USERNAME`/`DB_APP_PASSWORD`를 요구한다. **Spark DB의 제한 계정 생성·V3 적용은 아직 하지 않았다.** 태환님이 migration을 검토·승인하고 Spark에 별도 제한 계정 및 환경변수를 준비하기 전에는 현재 변경사항을 빌드·배포하지 않는다. 기존 Spark 데이터/서비스에는 이번 작업에서 접근하지 않았다.
+
 > 상태(2026-09-10): **Task 3~11 전부 PASS — 계획서의 배포 검증 절차 완료.** Postgres·하드웨어/Java17·
 > Embedding·LLM·Docker 배포(GHCR pull, ARM64 빌드 수정)·재시작 정책·E2E 검증 데이터·검색/답변/장애
 > 시나리오·운영 최소 점검까지 전부 확인. CD 자동화도 완성 — `ci.yml` 성공 시 `workflow_run`으로

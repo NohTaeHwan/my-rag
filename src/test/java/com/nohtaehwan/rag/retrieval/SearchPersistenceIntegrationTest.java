@@ -9,11 +9,15 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import javax.sql.DataSource;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataAccessException;
 
 import com.nohtaehwan.rag.indexing.mapper.ChunkRow;
@@ -22,12 +26,14 @@ import com.nohtaehwan.rag.indexing.mapper.DocumentInsertParameter;
 import com.nohtaehwan.rag.indexing.mapper.DocumentMapper;
 import com.nohtaehwan.rag.retrieval.mapper.SearchMapper;
 import com.nohtaehwan.rag.retrieval.mapper.SearchRow;
+import com.nohtaehwan.rag.testing.IsolatedDatabaseGuard;
+import com.nohtaehwan.rag.testing.IsolatedDatabaseGuard.Mode;
 
 /**
  * Mockito로는 증명할 수 없는, 실제 PostgreSQL(+pgvector)에 대해서만 확인 가능한 검색 동작을 검증한다.
- * 로컬 docker-compose {@code rag-postgres} 컨테이너가 떠 있어야 통과한다 — 기존
- * {@link com.nohtaehwan.rag.indexing.DocumentPersistenceIntegrationTest}와 같은 관례(별도 @Tag
- * 분리 없이 DB가 없으면 그대로 실패)를 따른다.
+ * {@link com.nohtaehwan.rag.indexing.DocumentPersistenceIntegrationTest}와 같이 {@code isolated-integration}
+ * tag로 {@code ./gradlew isolatedIntegrationTest}에서만 실행되고, migrate·insert·cleanup 전에
+ * {@link IsolatedDatabaseGuard}가 격리 통합 DB인지 확인한다.
  *
  * <p>테스트 실행마다 UUID 기반 고유 source를 사용해 기존 DB 데이터와 충돌하지 않도록 격리한다.
  * 저장·검색·cleanup 모두 같은 실행에서 생성한 {@code testSource} 하나만 사용하며, cleanup은 그
@@ -38,10 +44,17 @@ import com.nohtaehwan.rag.retrieval.mapper.SearchRow;
  * 각각 정확히 0, 1, 2가 되도록 만든다 — 로컬 DB에 이미 있는 다른(실제 색인된) 데이터가 섞여 있어도
  * 이 세 값의 상대적 순서는 수학적으로 항상 보장된다.
  */
+@Tag("isolated-integration")
 @SpringBootTest
+@Import(IsolatedDatabaseGuard.GuardedFlywayConfig.class)
 class SearchPersistenceIntegrationTest {
 
     private static final int DIMENSION = 1024;
+
+    // V3 migration이 시드하는 개발용 사용자/기본 Knowledge Base. 검색 SQL의 사용자·KB 범위
+    // 제한은 이 작업 단위의 범위 밖이라(SearchMapper 미변경) 저장 측 scope만 맞춰둔다.
+    private static final Long USER_ID = 1L;
+    private static final Long KNOWLEDGE_BASE_ID = 1L;
 
     @Autowired
     private DocumentMapper documentMapper;
@@ -49,14 +62,19 @@ class SearchPersistenceIntegrationTest {
     private DocumentChunkMapper documentChunkMapper;
     @Autowired
     private SearchMapper searchMapper;
+    @Autowired
+    private DataSource dataSource;
 
     private String testSource;
 
     @BeforeEach
     void setUp() {
+        // insert 전에 격리 통합 DB인지 확인한다. 아니면 실패하고 testSource도 null로 남아 cleanup이 생략된다.
+        IsolatedDatabaseGuard.verify(dataSource, Mode.INTEGRATION);
         testSource = "search-integration-test/" + UUID.randomUUID() + ".md";
 
-        DocumentInsertParameter parameter = new DocumentInsertParameter("검색 테스트 문서", testSource);
+        DocumentInsertParameter parameter =
+                new DocumentInsertParameter(USER_ID, KNOWLEDGE_BASE_ID, "검색 테스트 문서", testSource);
         documentMapper.insert(parameter);
         Long documentId = parameter.getId();
 
@@ -69,7 +87,8 @@ class SearchPersistenceIntegrationTest {
     @AfterEach
     void cleanUp() {
         if (testSource != null) {
-            documentMapper.deleteBySource(testSource);
+            IsolatedDatabaseGuard.verify(dataSource, Mode.INTEGRATION);
+            documentMapper.deleteByUserIdAndKnowledgeBaseIdAndSource(USER_ID, KNOWLEDGE_BASE_ID, testSource);
         }
     }
 

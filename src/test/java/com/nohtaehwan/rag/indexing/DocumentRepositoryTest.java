@@ -32,6 +32,9 @@ import com.nohtaehwan.rag.indexing.mapper.DocumentMapper;
 @ExtendWith(MockitoExtension.class)
 class DocumentRepositoryTest {
 
+    private static final Long USER_ID = 1L;
+    private static final Long KNOWLEDGE_BASE_ID = 2L;
+
     @Mock
     private DocumentMapper documentMapper;
     @Mock
@@ -54,7 +57,8 @@ class DocumentRepositoryTest {
 
     @Test
     void reindex는_Transactional이다() throws NoSuchMethodException {
-        Method method = DocumentRepository.class.getMethod("reindex", String.class, String.class, List.class);
+        Method method = DocumentRepository.class.getMethod(
+                "reindex", Long.class, Long.class, String.class, String.class, List.class);
         assertThat(method.isAnnotationPresent(Transactional.class)).isTrue();
     }
 
@@ -65,13 +69,15 @@ class DocumentRepositoryTest {
         DocumentChunk chunk = new DocumentChunk("a.md", "a.md#0", 0, List.of(), "content", 7);
         EmbeddedChunk embeddedChunk = new EmbeddedChunk(chunk, List.of(0.1, 0.2));
 
-        repository.reindex("Title A", "a.md", List.of(embeddedChunk));
+        repository.reindex(USER_ID, KNOWLEDGE_BASE_ID, "Title A", "a.md", List.of(embeddedChunk));
 
         InOrder inOrder = Mockito.inOrder(documentMapper, documentChunkRepository);
-        inOrder.verify(documentMapper).deleteBySource("a.md");
+        inOrder.verify(documentMapper).deleteByUserIdAndKnowledgeBaseIdAndSource(USER_ID, KNOWLEDGE_BASE_ID, "a.md");
 
         ArgumentCaptor<DocumentInsertParameter> captor = ArgumentCaptor.forClass(DocumentInsertParameter.class);
         inOrder.verify(documentMapper).insert(captor.capture());
+        assertThat(captor.getValue().getUserId()).isEqualTo(USER_ID);
+        assertThat(captor.getValue().getKnowledgeBaseId()).isEqualTo(KNOWLEDGE_BASE_ID);
         assertThat(captor.getValue().getTitle()).isEqualTo("Title A");
         assertThat(captor.getValue().getSource()).isEqualTo("a.md");
 
@@ -80,9 +86,19 @@ class DocumentRepositoryTest {
 
     @Test
     void reindex_source가_null이거나_공백이면_RagException을_던지고_아무_mapper도_호출하지_않는다() {
-        assertThatThrownBy(() -> repository.reindex("Title A", null, List.of()))
+        assertThatThrownBy(() -> repository.reindex(USER_ID, KNOWLEDGE_BASE_ID, "Title A", null, List.of()))
                 .isInstanceOf(RagException.class);
-        assertThatThrownBy(() -> repository.reindex("Title A", "  ", List.of()))
+        assertThatThrownBy(() -> repository.reindex(USER_ID, KNOWLEDGE_BASE_ID, "Title A", "  ", List.of()))
+                .isInstanceOf(RagException.class);
+
+        verifyNoInteractions(documentMapper, documentChunkRepository);
+    }
+
+    @Test
+    void reindex_userId나_knowledgeBaseId가_null이면_RagException을_던지고_아무_mapper도_호출하지_않는다() {
+        assertThatThrownBy(() -> repository.reindex(null, KNOWLEDGE_BASE_ID, "Title A", "a.md", List.of()))
+                .isInstanceOf(RagException.class);
+        assertThatThrownBy(() -> repository.reindex(USER_ID, null, "Title A", "a.md", List.of()))
                 .isInstanceOf(RagException.class);
 
         verifyNoInteractions(documentMapper, documentChunkRepository);
@@ -91,11 +107,11 @@ class DocumentRepositoryTest {
     @Test
     void reindex_생성된_id가_없으면_NPE_대신_RagException을_던진다() {
         // documentMapper.insert()가 mock이라 parameter.id를 채우지 않으므로 getId()는 null을 반환한다.
-        assertThatThrownBy(() -> repository.reindex("Title A", "a.md", List.of()))
+        assertThatThrownBy(() -> repository.reindex(USER_ID, KNOWLEDGE_BASE_ID, "Title A", "a.md", List.of()))
                 .isInstanceOf(RagException.class)
                 .hasMessageContaining("a.md");
 
-        verify(documentMapper).deleteBySource("a.md");
+        verify(documentMapper).deleteByUserIdAndKnowledgeBaseIdAndSource(USER_ID, KNOWLEDGE_BASE_ID, "a.md");
         verify(documentMapper).insert(any(DocumentInsertParameter.class));
         verifyNoInteractions(documentChunkRepository);
     }
@@ -110,16 +126,17 @@ class DocumentRepositoryTest {
         DataIntegrityViolationException dbFailure = new DataIntegrityViolationException("constraint violation");
         doThrow(dbFailure).when(documentChunkRepository).insertAll(eq(42L), eq(chunks));
 
-        assertThatThrownBy(() -> repository.reindex("Title A", "a.md", chunks))
+        assertThatThrownBy(() -> repository.reindex(USER_ID, KNOWLEDGE_BASE_ID, "Title A", "a.md", chunks))
                 .isSameAs(dbFailure);
     }
 
     @Test
     void reindex_mapper_예외도_삼키지_않고_그대로_전파한다() {
         DataIntegrityViolationException dbFailure = new DataIntegrityViolationException("unique_violation");
-        doThrow(dbFailure).when(documentMapper).deleteBySource("a.md");
+        doThrow(dbFailure).when(documentMapper)
+                .deleteByUserIdAndKnowledgeBaseIdAndSource(USER_ID, KNOWLEDGE_BASE_ID, "a.md");
 
-        assertThatThrownBy(() -> repository.reindex("Title A", "a.md", List.of()))
+        assertThatThrownBy(() -> repository.reindex(USER_ID, KNOWLEDGE_BASE_ID, "Title A", "a.md", List.of()))
                 .isSameAs(dbFailure);
 
         verify(documentMapper, never()).insert(any());

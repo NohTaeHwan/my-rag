@@ -235,6 +235,13 @@ Knowledge Base 선택(정확히 하나) → 질문 입력
 - **완료 기준에 반드시 포함할 것**: 사용자 A/B 간 격리뿐 아니라, **같은 사용자가 만든 서로 다른 Knowledge Base 사이의 격리**도 통합 테스트로 검증한다(예: 같은 사용자의 "소설" KB에 색인한 문서가 "학문" KB로 질문했을 때 검색/답변에 섞이지 않음) — 1차가 단일 개발용 사용자라서 실질적으로는 이 KB 간 격리가 사용자 간 격리보다 먼저, 더 자주 검증되는 조건이다.
 - 기존 MVP 데이터(현재 로컬/Spark에 색인된 `order-management.md` 등)는 마이그레이션 시 개발용 고정 사용자(`user_id=1`)의 기본 Knowledge Base로 귀속시킨다.
 
+> **구현 결정 (2026-10-23, Part 1 — `V3__add_user_knowledge_base_scope.sql`)**
+> 아래는 이 초안에 없던, 실제 migration을 작성하면서 확정한 세부 사항이다.
+> - 기본 Knowledge Base도 `id=1`로 명시적으로 시드한다(사용자와 마찬가지로). `tb_user`/`tb_knowledge_base` 모두 id를 직접 지정해 insert하므로, 그 즉시 `setval(pg_get_serial_sequence(...))`로 시퀀스를 재조정한다 — 안 하면 다음 auto-increment insert가 PK 충돌로 실패한다.
+> - `original_filename`/`stored_path`/`content_hash`/`file_size_bytes`는 업로드 API(다음 작업 단위 이후)에서만 채워지는 값이라 NOT NULL을 걸지 않는다. 기존 MVP 문서(디렉터리 색인 결과)는 이 네 컬럼이 전부 NULL인 채로 남는다 — "값이 없다 = 업로드 경로로 들어오지 않은 문서"라는 뜻이다.
+> - `DocumentIndexService`(디렉터리 색인)는 아직 `CurrentUserProvider`나 KB 선택 API가 없으므로, 위 시드 값과 짝을 맞춘 상수(`DEFAULT_USER_ID=1L`, `DEFAULT_KNOWLEDGE_BASE_ID=1L`)로 직접 호출한다. 실제 사용자·KB 선택 경로가 생기면(다음 작업 단위 이후) 이 상수를 호출자가 넘기는 값으로 교체한다.
+> - `tb_document.source`의 기존 `VARCHAR(1000)`과 복합 UNIQUE 인덱스(최대 바이트 수 제한, PostgreSQL btree 항목당 약 2.7KB)는 V2부터 있던 제약을 그대로 물려받은 것이며, 이번 V3가 새로 만든 위험이 아니다. 한글처럼 멀티바이트 문자로 1000자에 가까운 source를 실제로 쓰는 경우는 아직 없어 당장 막지 않았지만, 다음 단위에서 source 길이 정책을 다시 볼 필요가 있다.
+
 ---
 
 ## 7. 후순위 선택 기능 (1차 범위 밖)

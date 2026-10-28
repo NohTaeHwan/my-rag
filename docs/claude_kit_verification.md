@@ -99,6 +99,8 @@ Health Check 응답에 version 필드를 추가해줘.
 | 실행일 | 검증 범위 | 명령·시나리오 | 실제 결과 | 확인자 |
 |---|---|---|---|---|
 | YYYY-MM-DD | 예: 설치 파일 | 예: `python3 -m json.tool ...` | 통과/실패/미검증 | 태환 |
+| 2026-10-24 | Stop Hook — 격리 DB tag 테스트 제외 | 마커 파일 주입 후 `echo '{}' \| .claude/hooks/stop_build_check.sh`: tagged-only(V4·SearchPersistence), 혼합(GuardTest + DocumentPersistence·V3) | 통과 — tagged-only exit 0·Gradle test 미실행·격리 task 안내, 혼합 exit 0·GuardTest만 실행. 수정 전에는 `No tests found for given includes`로 실패 | Claude(Orca worker) |
+| 2026-10-24 | 4. Health Check, 5. 실제 세션 Hook 흐름 | `bootRun`·`/health` | 미검증 — 실제 DB 연결 금지 | - |
 
 ## 주의사항
 

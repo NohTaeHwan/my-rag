@@ -55,17 +55,17 @@ PostgreSQL + pgvector 기반 검색 증강 생성(RAG) 백엔드 MVP
 
 - 빌드·테스트는 `./gradlew`를 사용한다. Java 17 환경을 기준으로 한다.
 - API는 Spring MVC + MyBatis(mapper interface, `@Select`/`@Insert`/`@Delete`/`@InsertProvider` annotation SQL, XML mapper 미사용) 구조를 사용한다(2026-09-04부터, 그 이전엔 `JdbcTemplate`). JPA, MyBatis-Plus, QueryDSL, WebFlux 등 다른 영속성/비동기 프레임워크를 임의로 추가하지 않는다.
-- DB 접속 정보는 환경 변수 또는 `application.yml` 기본값을 사용하되, 자격 증명을 새 파일에 기록하지 않는다.
+- DB 접속 정보는 환경 변수 또는 `application.yml` 기본값을 사용하되, 자격 증명을 새 파일에 기록하지 않는다. 로컬 DB 컨테이너 관리자 계정은 `DB_PASSWORD`를 사용하고, 앱/테스트는 `DB_APP_USERNAME`/`DB_APP_PASSWORD`의 DDL 불가 계정으로 접속한다. Spark의 제한 계정은 아직 준비되지 않았다.
 - API 명세는 2026-09-08부터 Springdoc OpenAPI 3(`springdoc-openapi-starter-webmvc-ui:2.8.0`)를 사용한다. Controller에 `@Tag`/`@Operation`/`@ApiResponse`/`@Parameter` annotation을 직접 붙이는 방식이며, 별도 spec-first interface 분리는 쓰지 않는다. Swagger UI: `/swagger-ui.html`, OpenAPI JSON: `/v3/api-docs`. `/health`는 `@Hidden`으로 문서에서 제외한다. 인증이 없는 프로젝트라 Security Scheme은 추가하지 않는다.
-- DB migration은 `src/main/resources/db/migration/`에서 관리한다.
+- DB migration은 `src/main/resources/db/migration/`에서 관리한다. `spring.flyway.enabled=false`가 기본값이므로 앱 기동/테스트로 자동 반영되지 않는다. 실제 DB 변경은 사용자 승인 후 관리자 계정으로 별도 진행한다.
 - 현재 구현된 Health Check는 `/health`이며 응답에 애플리케이션과 DB 상태를 함께 포함한다.
-- 예외는 2026-09-08부터 두 클래스로 구분한다: `RagException`(500, 서버/외부 실패), `InvalidRequestException`(400, 잘못된 클라이언트 요청). 같은 성격의 실패에 새 예외 클래스를 추가로 만들지 말고 이 둘 중 해당하는 것을 재사용한다. `DB_PASSWORD`는 `application.yml` 기본값이 없으므로 `.env`(로컬) 또는 실제 배포 환경의 환경변수로 반드시 채워야 한다.
+- 예외는 2026-09-08부터 두 클래스로 구분한다: `RagException`(500, 서버/외부 실패), `InvalidRequestException`(400, 잘못된 클라이언트 요청). 같은 성격의 실패에 새 예외 클래스를 추가로 만들지 말고 이 둘 중 해당하는 것을 재사용한다. 컨테이너에는 `DB_PASSWORD`, 앱에는 `DB_APP_PASSWORD`가 필요하며 비밀값은 `.env`(로컬) 또는 실제 배포 환경변수에만 둔다.
 
 ## claude-kit 작업 규칙
 
 - 모든 기능 개발은 `docs/claude_kit_development_checklist.md`를 기준으로 진행하고 작업 완료 전에 체크 결과를 남긴다.
 - 작업 시작 전 `CLAUDE.md`와 관련 Skill·참고 문서를 확인한다.
-- 코드 변경 후 `./gradlew test`와 claude-kit Stop Hook의 컴파일·대응 테스트 결과를 확인한다.
+- 코드 변경 후 `./gradlew test`와 claude-kit Stop Hook의 컴파일·대응 테스트 결과를 확인한다. 다만 기존 로컬/운영 DB에 연결되는 DB 통합 테스트는 데이터 변경 가능성이 있으므로 실행하지 않고 별도 격리 DB에서만 실행한다. 미실행 시 완료로 표시하지 말고 사유를 기록한다.
 - API·DB·설계 변경이 있으면 관련 문서와 체크리스트를 함께 갱신한다.
 - Critical·High 위험 변경은 claude-kit Review 결과를 확인하고 사람이 직접 검수한다.
 - claude-kit 자체 또는 Hook 동작을 변경하면 `docs/claude_kit_verification.md`의 시나리오를 실행하고 실제 결과를 기록한다.

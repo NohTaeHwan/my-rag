@@ -27,16 +27,19 @@ import lombok.extern.slf4j.Slf4j;
  * 호출하는 쪽(Service)에서 앞선 호출이 이미 커밋된 뒤 다음 호출이 실패해도, 그 커밋은 롤백되지
  * 않는다 — 색인은 문서 단위로 commit되는 부분 성공(partial success)을 허용하는 설계다.
  *
- * <p>{@code tb_document.source}는 UNIQUE 제약(V2 migration)이 걸려 있어 같은 source의 문서는
- * 항상 최대 1건만 존재한다. 삭제 대상도 그 1건(또는 0건)으로 한정된다. 같은 source로 두 재색인
- * 요청이 동시에 실행되면, 먼저 커밋한 쪽이 성공하고 나중 트랜잭션은 UNIQUE 제약 위반
- * (unique_violation)으로 insert가 실패해 그 트랜잭션 전체가 롤백된다 — 중복 행은 생성되지 않고,
- * 대신 나중 요청이 실패로 끝난다(별도 락은 걸지 않는다).
+ * <p>{@code tb_document}의 UNIQUE 제약은 V3 migration부터 {@code (user_id, knowledge_base_id,
+ * source)} 범위다 — 같은 사용자의 같은 Knowledge Base 안에서는 같은 source의 문서가 항상 최대
+ * 1건만 존재하지만, 사용자가 다르거나 같은 사용자라도 Knowledge Base가 다르면 같은 source가
+ * 공존할 수 있다. 삭제·insert 모두 {@code userId}/{@code knowledgeBaseId}로 범위를 좁히므로
+ * 다른 범위의 동일 source 문서는 영향을 받지 않는다. 같은 범위로 두 재색인 요청이 동시에
+ * 실행되면, 먼저 커밋한 쪽이 성공하고 나중 트랜잭션은 UNIQUE 제약 위반(unique_violation)으로
+ * insert가 실패해 그 트랜잭션 전체가 롤백된다 — 중복 행은 생성되지 않고, 대신 나중 요청이
+ * 실패로 끝난다(별도 락은 걸지 않는다).
  *
  * <p>sourceKey가 null이거나 빈 문자열이면 저장하지 않고 {@link RagException}을 던진다.
  * {@link com.nohtaehwan.rag.document.DocumentSourceReader}가 만드는 정상 경로에서는 발생하지
- * 않지만, source 없이 저장하면 UNIQUE 제약과 재색인 조회(WHERE source = ?)의 전제가 깨지므로
- * 방어적으로 막는다.
+ * 않지만, source 없이 저장하면 UNIQUE 제약과 재색인 조회(WHERE ... source = ?)의 전제가
+ * 깨지므로 방어적으로 막는다. userId/knowledgeBaseId가 null이어도 같은 이유로 막는다.
  */
 @Slf4j
 @Repository
@@ -51,22 +54,29 @@ public class DocumentRepository {
     }
 
     /**
-     * 같은 sourceKey(source)의 기존 문서를 삭제하고 새 문서+Chunk를 저장한다.
-     * 기존 tb_document 삭제 시 FK ON DELETE CASCADE로 기존 tb_document_chunk도 함께 삭제된다.
+     * 주어진 사용자·Knowledge Base 범위 안에서 같은 sourceKey(source)의 기존 문서를 삭제하고
+     * 새 문서+Chunk를 저장한다. 기존 tb_document 삭제 시 FK ON DELETE CASCADE로 기존
+     * tb_document_chunk도 함께 삭제된다. 다른 사용자·KB의 동일 sourceKey 문서는 범위 조건에
+     * 걸리지 않으므로 삭제되지 않는다.
      *
-     * @param title     문서 제목
-     * @param sourceKey 문서 source key (재색인 대상 판별 기준)
-     * @param chunks    저장할 Chunk와 embedding 목록
+     * @param userId          문서가 귀속될 사용자 id
+     * @param knowledgeBaseId 문서가 귀속될 Knowledge Base id
+     * @param title           문서 제목
+     * @param sourceKey       문서 source key (재색인 대상 판별 기준, userId/knowledgeBaseId와 함께 범위를 정함)
+     * @param chunks          저장할 Chunk와 embedding 목록
      */
     @Transactional
-    public void reindex(String title, String sourceKey, List<EmbeddedChunk> chunks) {
+    public void reindex(Long userId, Long knowledgeBaseId, String title, String sourceKey, List<EmbeddedChunk> chunks) {
         if (sourceKey == null || sourceKey.isBlank()) {
             throw new RagException("문서 source는 비어 있을 수 없습니다.");
         }
+        if (userId == null || knowledgeBaseId == null) {
+            throw new RagException("문서 재색인에는 userId와 knowledgeBaseId가 필요합니다: sourceKey=" + sourceKey);
+        }
 
-        documentMapper.deleteBySource(sourceKey);
+        documentMapper.deleteByUserIdAndKnowledgeBaseIdAndSource(userId, knowledgeBaseId, sourceKey);
 
-        DocumentInsertParameter parameter = new DocumentInsertParameter(title, sourceKey);
+        DocumentInsertParameter parameter = new DocumentInsertParameter(userId, knowledgeBaseId, title, sourceKey);
         documentMapper.insert(parameter);
 
         Long documentId = parameter.getId();
@@ -75,6 +85,7 @@ public class DocumentRepository {
         }
 
         documentChunkRepository.insertAll(documentId, chunks);
-        log.info("문서 재색인 완료: sourceKey={}, chunkCount={}", sourceKey, chunks.size());
+        log.info("문서 재색인 완료: userId={}, knowledgeBaseId={}, sourceKey={}, chunkCount={}",
+                userId, knowledgeBaseId, sourceKey, chunks.size());
     }
 }

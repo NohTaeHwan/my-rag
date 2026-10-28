@@ -2,7 +2,7 @@
 
 프로젝트의 문서를 **찾으려는 내용별로** 안내한다. 경로는 저장소 루트 기준이며, 링크는 이 문서에서 바로 열 수 있다. 이 목록은 코드·설정·생성된 평가용 Markdown 데이터가 아닌 **사람이 읽는 문서와 작업 계획**을 대상으로 한다.
 
-> 보관 상태: 아래 `docs/rag_performance_results.md`는 `.gitignore` 대상, `docs/personal_rag_chatbot_design.md`는 현재 미추적, `.hermes/` 전체는 `.gitignore` 대상이다. **로컬 파일은 있지만 clone만으로는 볼 수 없는 문서**이므로 공유 전에 Git 상태를 확인한다.
+> 보관 상태: `docs/rag_performance_results.md`와 `docs/private/`는 `.gitignore` 대상이다. `docs/personal_rag_chatbot_design.md`는 현재 미추적, `.hermes/` 전체는 `.gitignore` 대상이다. 로컬 전용 자료는 clone에서 보이지 않을 수 있으므로 공유 전에 Git 상태를 확인한다.
 
 ## 가장 먼저 찾을 문서
 
@@ -26,12 +26,17 @@
 
 ## 실행·배포·데이터베이스
 
+현재 앱 설정은 Flyway 자동 적용을 비활성화한다(`application.yml`). 로컬 앱은 DDL 권한이 없는 `rag_app`으로 접속하며, 관리자 계정은 로컬 DB 변경을 사용자가 승인했을 때만 사용한다. Spark의 계정·스키마는 변경하지 않았으므로 배포 전 별도 준비가 필요하다.
+
 | 문서 | 한 줄 요약 |
 |---|---|
 | [local_embedding_model_setup_dgx_spark.md](local_embedding_model_setup_dgx_spark.md) | DGX Spark의 BGE-M3 Embedding 모델 설치·운영 구성을 설명한다. |
 | [dgx_spark_mvp_deployment.md](dgx_spark_mvp_deployment.md) | DGX Spark에 API·DB·Embedding·LLM을 배포하고 확인하는 절차를 기록한다. |
+| [database_migration_history.md](database_migration_history.md) | V1–V4의 변경 요약, 로컬 `rag_db`의 적용 상태, 격리 검증 범위와 DB 계정 분리를 기록한다. |
 | [V1__init_rag_schema.sql](../src/main/resources/db/migration/V1__init_rag_schema.sql) | Flyway가 적용하는 pgvector 및 최초 문서·Chunk 스키마다. |
 | [V2__add_unique_constraint_to_document_source.sql](../src/main/resources/db/migration/V2__add_unique_constraint_to_document_source.sql) | `tb_document.source`의 유일성 제약을 추가하는 Flyway migration이다. |
+| [V3__add_user_knowledge_base_scope.sql](../src/main/resources/db/migration/V3__add_user_knowledge_base_scope.sql) | `tb_user`·`tb_knowledge_base`를 추가하고 `tb_document`를 사용자·KB 범위로 확장한다. `source` 유일성 제약을 전역에서 `(user_id, knowledge_base_id, source)` 범위로 교체한다(검색 SQL의 범위 제한은 다음 작업 단위, 미완료). |
+| [V4__enforce_document_knowledge_base_owner.sql](../src/main/resources/db/migration/V4__enforce_document_knowledge_base_owner.sql) | `tb_document`의 사용자와 Knowledge Base 소유자가 일치하도록 복합 FK를 추가한다. |
 | [001_init_rag_schema.sql](../db/migrations/001_init_rag_schema.sql) | 초기 스키마를 확인하기 위한 별도 SQL 문서이며, 앱의 Flyway 적용 경로는 위 `src/main/resources/db/migration/`이다. |
 
 ## 성능 평가 자료 (`perf/`)
@@ -56,6 +61,8 @@
 | [2026-09-08_similarity-search.md](checklists/2026-09-08_similarity-search.md) | pgvector 유사도 검색 작업 기록이다. |
 | [2026-09-08_swagger-setup.md](checklists/2026-09-08_swagger-setup.md) | Swagger/OpenAPI 구성 작업 기록이다. |
 | [2026-09-08_answer-generation.md](checklists/2026-09-08_answer-generation.md) | LLM 답변 생성 API 작업 기록이다. |
+| [2026-10-23_user-knowledge-base-scope.md](checklists/2026-10-23_user-knowledge-base-scope.md) | 사용자·Knowledge Base DB 범위 전환(V3), 소유자 복합 FK(V4), 통합 테스트 cleanup 격리 보강과 검증 상태를 기록한다. |
+| [2026-10-23_flyway-app-role-guard.md](checklists/2026-10-23_flyway-app-role-guard.md) | Flyway 자동 적용 차단·로컬 앱 DB 제한 계정 적용과 비파괴 검증 기록이다. |
 
 ## 기획·구현 이력 (`.hermes/plans/`, 로컬 전용)
 

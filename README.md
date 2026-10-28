@@ -37,7 +37,7 @@ Markdown 문서를 넣고, 질문에 관련된 Chunk와 출처를 결과값으�
 docker compose up -d
 ```
 
-`docker-compose.yml`이 `pgvector/pgvector:pg17` 이미지를 `5432` 포트로 띄웁니다. 테이블은 앱 기동 시 Flyway가 `src/main/resources/db/migration/`의 스크립트로 자동 생성합니다.
+`docker-compose.yml`이 `pgvector/pgvector:pg17` 이미지를 `5432` 포트로 띄웁니다. Flyway 자동 적용은 기본적으로 꺼져 있습니다. 빈 DB에는 테이블이 없으므로, DB 변경은 검토·승인 후 관리 계정으로 별도 적용해야 합니다. 앱/테스트는 DDL 권한이 없는 계정으로 접속합니다.
 
 ### 3. 환경변수 설정
 
@@ -57,8 +57,10 @@ set -a; source .env; set +a
 | 변수 | 필수 | 기본값 | 설명 |
 |---|---|---|---|
 | `DB_URL` | 아니오 | `jdbc:postgresql://127.0.0.1:5432/rag_db` | PostgreSQL 접속 URL |
-| `DB_USERNAME` | 아니오 | `rag` | PostgreSQL 사용자 |
-| `DB_PASSWORD` | **예** | 없음 | PostgreSQL 비밀번호 (`.env`에만 두고 커밋하지 않음) |
+| `DB_USERNAME` | 아니오 | `rag` | 로컬 docker-compose 관리자 계정(앱에서 사용하지 않음) |
+| `DB_PASSWORD` | **예** | 없음 | 로컬 docker-compose 관리자 암호(앱에서 사용하지 않음) |
+| `DB_APP_USERNAME` | 아니오 | `rag_app` | 앱/테스트 전용 제한 계정 |
+| `DB_APP_PASSWORD` | **예** | 없음 | 앱/테스트 전용 제한 계정 암호 (`.env`에만 두고 커밋하지 않음) |
 | `SERVER_PORT` | 아니오 | `8080` | 애플리케이션 포트 |
 | `EMBEDDING_BASE_URL` | **예** | `http://127.0.0.1:8000/v1` | BGE-M3 Embedding API base URL (`/v1` 포함) |
 | `EMBEDDING_MODEL` | 아니오 | `BAAI/bge-m3` | Embedding 모델명 |
@@ -71,7 +73,7 @@ set -a; source .env; set +a
 | `LLM_MAX_TOKENS` | 아니오 | `512` | LLM 응답의 최대 토큰 수 |
 | `LLM_TEMPERATURE` | 아니오 | `0.0` | LLM 샘플링 temperature (0~2) |
 
-`EMBEDDING_BASE_URL`/`LLM_BASE_URL`은 로컬 더미 값이라 실제 서버를 쓰려면 반드시 채워야 합니다. `DB_PASSWORD`는 기본값이 없어 설정하지 않으면 애플리케이션이 기동하지 않습니다. `LLM_API_KEY`는 `.env`에만 두고 커밋하지 않습니다.
+`EMBEDDING_BASE_URL`/`LLM_BASE_URL`은 로컬 더미 값이라 실제 서버를 쓰려면 반드시 채워야 합니다. 로컬 DB 컨테이너에는 `DB_PASSWORD`, 앱에는 `DB_APP_PASSWORD`가 필요합니다. `LLM_API_KEY`는 `.env`에만 두고 커밋하지 않습니다. Spark에는 제한 계정과 앱 전용 환경변수가 아직 준비되지 않았으므로 이 버전을 그대로 배포하지 않습니다.
 
 ### 4. 애플리케이션 실행
 
@@ -182,7 +184,7 @@ _last update: 2026-09-08_
 
 - 설정된 디렉터리(`document.source-directory`)의 `.md` 파일 전체를 색인한다. 요청 본문은 없다.
 - 대상 파일이 없으면 오류가 아니라 0건 성공으로 응답한다.
-- 같은 `source`로 재색인하면 기존 문서를 대체한다. `tb_document.source`는 UNIQUE 제약이 있어 같은 source의 문서는 항상 최대 1건이다.
+- 같은 `source`로 재색인하면 기존 문서를 대체한다. `tb_document.source`는 사용자·Knowledge Base 범위 안에서 유일하도록 제약된다(V3, `docs/personal_rag_chatbot_design.md` §2). 이 API가 호출하는 디렉터리 색인은 항상 개발용 고정 사용자·기본 Knowledge Base로 귀속되므로, 지금은 그 범위 안에서 같은 source의 문서가 항상 최대 1건이다.
 - Embedding 생성은 DB 트랜잭션 밖에서 순차 수행한다(재시도 없음, 실패 시 즉시 중단).
 - 문서 삭제·insert·Chunk insert는 문서 1건 단위의 하나의 트랜잭션이다.
 - 여러 문서 중 뒤의 문서가 실패해도 앞서 이미 저장(commit)된 문서는 유지된다(부분 성공 허용).

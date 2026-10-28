@@ -44,6 +44,12 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class DocumentIndexService {
 
+    // 디렉터리 기반 색인은 아직 사용자별 요청 경로(CurrentUserProvider, KB 선택 API)가 없다.
+    // V3 migration이 시드하는 개발용 사용자(id=1)/기본 Knowledge Base(id=1)에 고정으로 귀속시킨다.
+    // 실제 사용자·KB 선택이 생기면(다음 작업 단위 이후) 이 상수 대신 호출 경로에서 받은 값을 쓴다.
+    private static final Long DEFAULT_USER_ID = 1L;
+    private static final Long DEFAULT_KNOWLEDGE_BASE_ID = 1L;
+
     private final DocumentSourceReader documentSourceReader;
     private final MarkdownParser markdownParser;
     private final MarkdownChunker markdownChunker;
@@ -87,7 +93,8 @@ public class DocumentIndexService {
                 embeddedChunks.add(new EmbeddedChunk(chunk, embeddingClient.embed(chunk.content())));
             }
 
-            documentRepository.reindex(parsed.title(), file.sourceKey(), embeddedChunks);
+            documentRepository.reindex(
+                    DEFAULT_USER_ID, DEFAULT_KNOWLEDGE_BASE_ID, parsed.title(), file.sourceKey(), embeddedChunks);
 
             documentCount++;
             chunkCount += chunks.size();

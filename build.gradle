@@ -35,11 +35,65 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+// DB를 비우거나 쓰는 테스트는 tag로 분리해 기본 test에서 제외한다. 아래 isolated* task로만 실행한다.
+def isolatedDbTags = ['isolated-migration', 'isolated-integration']
+
 tasks.named('test') {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        excludeTags(*isolatedDbTags)
+    }
 }
 
-// 로컬 개발 전용: .env가 있으면 읽어서 test/bootRun 실행 시에만 환경변수로 주입한다.
+/*
+ * 격리 DB 전용 테스트 task. 기본 URL·.env로 fallback하지 않도록 아래 환경변수 4개가 모두 있어야 하며,
+ * 하나라도 없으면 테스트 JVM을 띄우기 전에 실패한다. migration·통합 테스트는 서로 다른 변수(DB)를 쓴다.
+ *   {prefix}_URL, {prefix}_NAME, {prefix}_USERNAME, {prefix}_PASSWORD
+ * 자격 증명은 프로세스 명령줄·로그에 남는 시스템 프로퍼티가 아니라 test worker 환경변수
+ * DB_URL/DB_APP_USERNAME/DB_APP_PASSWORD로만 넘긴다. 이 task에는 .env를 주입하지 않으며,
+ * 상속된 SPRING_* 환경변수도 지워 application.yml 매핑을 덮어쓰지 못하게 한다.
+ * 시스템 프로퍼티에는 비밀이 아닌 opt-in·flyway 플래그와 기대 DB 이름만 둔다.
+ * 테스트 코드의 IsolatedDatabaseGuard가 실제 JDBC host·DB 이름을 다시 확인한다.
+ */
+def isolatedDbTaskNames = ['isolatedMigrationTest', 'isolatedIntegrationTest']
+
+def registerIsolatedDbTest = { String taskName, String tag, String envPrefix, String optInProperty, boolean flywayEnabled ->
+    tasks.register(taskName, Test) {
+        group = 'verification'
+        description = "격리 DB(${envPrefix}_*)에서 @Tag(\"${tag}\") 테스트만 실행한다."
+        testClassesDirs = sourceSets.test.output.classesDirs
+        classpath = sourceSets.test.runtimeClasspath
+        useJUnitPlatform {
+            includeTags tag
+        }
+        outputs.upToDateWhen { false }
+        shouldRunAfter tasks.named('test')
+
+        doFirst {
+            def dbEnv = ['URL', 'NAME', 'USERNAME', 'PASSWORD'].collectEntries {
+                [(it): providers.environmentVariable("${envPrefix}_${it}").getOrNull()]
+            }
+            def missing = dbEnv.findAll { !it.value }.keySet().collect { "${envPrefix}_${it}" }
+            if (missing) {
+                throw new GradleException("${taskName}: 격리 DB 환경변수가 없다 — ${missing.join(', ')}")
+            }
+            // Spring relaxed binding은 spring.datasource.url·spring_datasource_url 같은 소문자 이름도 읽으므로 대소문자·구분자 무관하게 지운다.
+            environment.keySet().removeIf { it.toUpperCase(Locale.ROOT) ==~ /SPRING[._].*/ }
+            // JVM이 직접 읽는 옵션 변수로 -Dspring.datasource.url 등을 주입하지 못하게 worker 환경에서만 지운다.
+            ['JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS'].each { environment.remove(it) }
+            environment('DB_URL', dbEnv.URL)
+            environment('DB_APP_USERNAME', dbEnv.USERNAME)
+            environment('DB_APP_PASSWORD', dbEnv.PASSWORD)
+            systemProperty 'spring.flyway.enabled', flywayEnabled.toString()
+            systemProperty 'isolatedTest.expectedDbName', dbEnv.NAME
+            systemProperty optInProperty, 'true'
+        }
+    }
+}
+
+registerIsolatedDbTest('isolatedMigrationTest', 'isolated-migration', 'ISOLATED_MIGRATION_DB', 'isolatedMigrationTest', false)
+registerIsolatedDbTest('isolatedIntegrationTest', 'isolated-integration', 'ISOLATED_INTEGRATION_DB', 'isolatedIntegrationTest', true)
+
+// 로컬 개발 전용: .env가 있으면 읽어서 test/bootRun 실행 시에만 환경변수로 주입한다(isolated* task 제외).
 // .env는 git에 커밋되지 않으며(gitignore), 이 로직은 패키징된 산출물(bootJar)에는 영향을 주지 않는다.
 // 실제 서버 배포 환경은 이 파일이 아니라 그 환경이 직접 제공하는 환경변수를 사용해야 한다.
 def envFile = rootProject.file('.env')
@@ -48,7 +102,7 @@ if (envFile.exists()) {
     envFile.withInputStream { envProps.load(it) }
     def envMap = envProps.collectEntries { key, value -> [(key.toString()): value.toString()] }
 
-    tasks.withType(Test).configureEach {
+    tasks.withType(Test).matching { !(it.name in isolatedDbTaskNames) }.configureEach {
         environment(envMap)
     }
     tasks.named('bootRun') {

@@ -3,6 +3,7 @@ package com.nohtaehwan.rag.indexing;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -33,6 +34,11 @@ import com.nohtaehwan.rag.exception.RagException;
 
 @ExtendWith(MockitoExtension.class)
 class DocumentIndexServiceTest {
+
+    // DocumentIndexService.DEFAULT_USER_ID/DEFAULT_KNOWLEDGE_BASE_ID(private)과 같은 값.
+    // 디렉터리 색인은 항상 이 고정 범위로 reindex()를 호출한다.
+    private static final Long DEFAULT_USER_ID = 1L;
+    private static final Long DEFAULT_KNOWLEDGE_BASE_ID = 1L;
 
     private static final EmbeddingProperties PROPERTIES =
             new EmbeddingProperties("http://localhost:8000/v1", "BAAI/bge-m3", 4, Duration.ofSeconds(1), Duration.ofSeconds(1));
@@ -88,8 +94,10 @@ class DocumentIndexServiceTest {
         verify(embeddingClient, times(3)).embed(anyString());
 
         InOrder inOrder = Mockito.inOrder(documentRepository);
-        inOrder.verify(documentRepository).reindex(eq("Title A"), eq("a.md"), any());
-        inOrder.verify(documentRepository).reindex(eq("Title B"), eq("b.md"), any());
+        inOrder.verify(documentRepository)
+                .reindex(eq(DEFAULT_USER_ID), eq(DEFAULT_KNOWLEDGE_BASE_ID), eq("Title A"), eq("a.md"), any());
+        inOrder.verify(documentRepository)
+                .reindex(eq(DEFAULT_USER_ID), eq(DEFAULT_KNOWLEDGE_BASE_ID), eq("Title B"), eq("b.md"), any());
     }
 
     @Test
@@ -120,7 +128,7 @@ class DocumentIndexServiceTest {
         assertThatThrownBy(() -> service().indexDocuments())
                 .isInstanceOf(RagException.class);
 
-        verify(documentRepository, never()).reindex(anyString(), anyString(), any());
+        verify(documentRepository, never()).reindex(anyLong(), anyLong(), anyString(), anyString(), any());
     }
 
     @Test
@@ -147,8 +155,10 @@ class DocumentIndexServiceTest {
                 .isInstanceOf(RagException.class);
 
         // 첫 번째 문서는 이미 reindex()가 호출되어 저장됐고(문서 단위 commit), 두 번째는 호출되지 않는다.
-        verify(documentRepository, times(1)).reindex(eq("Title A"), eq("a.md"), any());
-        verify(documentRepository, never()).reindex(eq("Title B"), eq("b.md"), any());
+        verify(documentRepository, times(1))
+                .reindex(eq(DEFAULT_USER_ID), eq(DEFAULT_KNOWLEDGE_BASE_ID), eq("Title A"), eq("a.md"), any());
+        verify(documentRepository, never())
+                .reindex(eq(DEFAULT_USER_ID), eq(DEFAULT_KNOWLEDGE_BASE_ID), eq("Title B"), eq("b.md"), any());
     }
 
     @Test
@@ -165,6 +175,7 @@ class DocumentIndexServiceTest {
         assertThat(response.documentCount()).isEqualTo(1);
         assertThat(response.chunkCount()).isZero();
         verifyNoInteractions(embeddingClient);
-        verify(documentRepository).reindex(eq("empty"), eq("empty.md"), eq(List.of()));
+        verify(documentRepository)
+                .reindex(eq(DEFAULT_USER_ID), eq(DEFAULT_KNOWLEDGE_BASE_ID), eq("empty"), eq("empty.md"), eq(List.of()));
     }
 }
