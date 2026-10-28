@@ -5,7 +5,7 @@
 // 다른 서비스에 영향을 줄 위험이 크다(scenarios.json의 answer_load_cap 참고).
 //
 // 사용 예:
-//   BASE_URL=http://127.0.0.1:8090 STAGE=smoke k6 run answer-load.js
+//   BASE_URL=http://127.0.0.1:8090 STAGE=smoke KNOWLEDGE_BASE_ID=1 k6 run answer-load.js
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
@@ -13,6 +13,12 @@ import { Counter, Rate, Trend } from 'k6/metrics';
 const scenarios = JSON.parse(open('./scenarios.json'));
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:8090';
 const STAGE = __ENV.STAGE || 'smoke';
+// knowledgeBaseId는 서버에서 필수다(없으면 400). 기본값을 두지 않고 명시 입력만 받는다 —
+// 잘못된 KB로 조용히 측정하지 않도록 init 단계(요청 전)에서 바로 실패시킨다.
+const KNOWLEDGE_BASE_ID = __ENV.KNOWLEDGE_BASE_ID;
+if (!/^[1-9][0-9]*$/.test(KNOWLEDGE_BASE_ID || '') || !Number.isSafeInteger(Number(KNOWLEDGE_BASE_ID))) {
+  throw new Error(`KNOWLEDGE_BASE_ID는 필수 양의 정수다 (입력: ${KNOWLEDGE_BASE_ID})`);
+}
 const cfg = scenarios.answer[STAGE];
 if (!cfg) {
   throw new Error(`알 수 없는 STAGE: ${STAGE} (가능: ${Object.keys(scenarios.answer).join(', ')})`);
@@ -44,7 +50,7 @@ export const options = {
 
 export default function () {
   const key = KEYS[Math.floor(Math.random() * KEYS.length)];
-  const payload = JSON.stringify({ question: QUESTIONS[key] });
+  const payload = JSON.stringify({ question: QUESTIONS[key], knowledgeBaseId: Number(KNOWLEDGE_BASE_ID) });
   const res = http.post(`${BASE_URL}/api/answers`, payload, {
     headers: { 'Content-Type': 'application/json', 'X-Request-Id': randomRequestId() },
     timeout: '65s', // LLM read-timeout(60s)보다 여유를 둠

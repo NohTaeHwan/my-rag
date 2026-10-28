@@ -12,7 +12,10 @@ distance도 함께 기록한다.
 
 사용 예:
   python3 evaluate_answers.py --base-url http://127.0.0.1:8090 \
+      --knowledge-base-id 1 \
       --queries ../dataset/queries_s.resolved.jsonl --out ../results/answers_s.json
+
+--knowledge-base-id(필수)는 queries의 gold 문서를 색인한 KB여야 정확도 해석이 유효하다.
 """
 from __future__ import annotations
 
@@ -32,11 +35,18 @@ REFUSAL_PATTERNS = [
 ]
 
 
-def call_answer(base_url: str, question: str, timeout: float) -> tuple[dict | None, float, int]:
+def positive_int(value: str) -> int:
+    """argparse용 양의 정수 검증 — 기본 KB를 암묵적으로 대입하지 않기 위해 명시 입력만 받는다."""
+    if not value.isascii() or not value.isdigit() or value.startswith("0"):
+        raise argparse.ArgumentTypeError(f"양의 정수가 아님: {value!r}")
+    return int(value)
+
+
+def call_answer(base_url: str, question: str, knowledge_base_id: int, timeout: float) -> tuple[dict | None, float, int]:
     """LLM 호출 1건. 150개를 통째로 돌리는 배치라 개별 요청의 timeout/네트워크 오류가
     전체 실행을 중단시키면 안 된다 — 실패한 질의는 status=0으로 표시하고 계속 진행한다."""
     url = f"{base_url}/api/answers"
-    payload = json.dumps({"question": question}).encode("utf-8")
+    payload = json.dumps({"question": question, "knowledgeBaseId": knowledge_base_id}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     start = time.monotonic()
     try:
@@ -72,12 +82,12 @@ def load_queries(path: Path) -> list[dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def evaluate(base_url: str, queries: list[dict], timeout: float) -> dict:
+def evaluate(base_url: str, queries: list[dict], knowledge_base_id: int, timeout: float) -> dict:
     per_query = []
     for i, q in enumerate(queries, start=1):
         if i % 10 == 0 or i == len(queries):
             print(f"진행: {i}/{len(queries)}", flush=True)
-        body, latency_ms, status = call_answer(base_url, q["question"], timeout)
+        body, latency_ms, status = call_answer(base_url, q["question"], knowledge_base_id, timeout)
         success = body is not None and status == 200
         answer = body.get("answer", "") if body else ""
         sources = body.get("sources", []) if body else []
@@ -132,13 +142,15 @@ def evaluate(base_url: str, queries: list[dict], timeout: float) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True, help="예: http://127.0.0.1:8090")
+    parser.add_argument("--knowledge-base-id", required=True, type=positive_int,
+                        help="답변 대상 KB id(필수, 양의 정수) — gold 문서가 색인된 KB")
     parser.add_argument("--queries", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--timeout", type=float, default=30.0)
     args = parser.parse_args()
 
     queries = load_queries(args.queries)
-    result = evaluate(args.base_url.rstrip("/"), queries, args.timeout)
+    result = evaluate(args.base_url.rstrip("/"), queries, args.knowledge_base_id, args.timeout)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

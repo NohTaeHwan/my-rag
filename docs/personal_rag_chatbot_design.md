@@ -113,7 +113,7 @@ tb_document_index_job
 
 Migration 파일 매핑(핵심 범위, 구현 계획과 동일):
 - `V3__add_user_knowledge_base_scope.sql` — `tb_user`, `tb_knowledge_base`, `tb_document` 컬럼 추가, UNIQUE 제약 완화
-- `V4__add_document_index_job.sql` — `tb_document_index_job`
+- ~~`V4__add_document_index_job.sql` — `tb_document_index_job`~~ (초안. **실제 V4는 `V4__enforce_document_knowledge_base_owner.sql`** — `tb_document(knowledge_base_id, user_id)` → `tb_knowledge_base(id, user_id)` 복합 FK로 문서·KB 소유자 일치를 강제한다. 색인 작업 테이블은 아직 없으며 도입 시 다음 사용 가능한 V 번호를 부여한다.)
 
 > `tb_user_memory`, `tb_conversation_summary`는 §7(후순위)로 이동했다. 실제로 그 기능을 구현하기로 결정하는 시점에, 그때 다음으로 사용 가능한 V 번호를 부여한다(지금 V5/V6으로 미리 확정하지 않음).
 

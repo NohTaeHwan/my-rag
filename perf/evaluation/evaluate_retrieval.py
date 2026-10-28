@@ -7,7 +7,10 @@ relevant_chunk_keys가 채워져 있으면 chunk 단위로, 비어 있으면(res
 
 사용 예:
   python3 evaluate_retrieval.py --base-url http://<spark-tailscale-ip>:8090 \
+      --knowledge-base-id 1 \
       --queries ../dataset/queries_s.jsonl --out ../results/retrieval_s.json
+
+--knowledge-base-id(필수)는 queries의 gold 문서를 색인한 KB여야 정확도 해석이 유효하다.
 """
 from __future__ import annotations
 
@@ -22,8 +25,15 @@ from pathlib import Path
 from metrics import aggregate, evaluate_single_query
 
 
-def search(base_url: str, query: str, timeout: float) -> tuple[list[dict], float]:
-    url = f"{base_url}/api/search?" + urllib.parse.urlencode({"query": query})
+def positive_int(value: str) -> int:
+    """argparse용 양의 정수 검증 — 기본 KB를 암묵적으로 대입하지 않기 위해 명시 입력만 받는다."""
+    if not value.isascii() or not value.isdigit() or value.startswith("0"):
+        raise argparse.ArgumentTypeError(f"양의 정수가 아님: {value!r}")
+    return int(value)
+
+
+def search(base_url: str, query: str, knowledge_base_id: int, timeout: float) -> tuple[list[dict], float]:
+    url = f"{base_url}/api/search?" + urllib.parse.urlencode({"query": query, "knowledgeBaseId": knowledge_base_id})
     start = time.monotonic()
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         body = json.loads(resp.read().decode("utf-8"))
@@ -42,12 +52,12 @@ def load_queries(path: Path) -> list[dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def evaluate(base_url: str, queries: list[dict], timeout: float) -> dict:
+def evaluate(base_url: str, queries: list[dict], knowledge_base_id: int, timeout: float) -> dict:
     per_query = []
     for q in queries:
         if q.get("unanswerable"):
             # unanswerable 질의는 Recall/MRR 대상이 아니라 "결과가 얼마나 무관한지"만 별도 기록한다.
-            results, latency_ms = search(base_url, q["question"], timeout)
+            results, latency_ms = search(base_url, q["question"], knowledge_base_id, timeout)
             per_query.append({
                 "query_id": q["query_id"],
                 "category": q["category"],
@@ -60,7 +70,7 @@ def evaluate(base_url: str, queries: list[dict], timeout: float) -> dict:
         use_chunk_level = bool(q.get("relevant_chunk_keys"))
         relevant_keys = set(q["relevant_chunk_keys"]) if use_chunk_level else set(q["relevant_sources"])
 
-        results, latency_ms = search(base_url, q["question"], timeout)
+        results, latency_ms = search(base_url, q["question"], knowledge_base_id, timeout)
         retrieved_keys = build_retrieved_keys(results, use_chunk_level)
 
         metrics_result = evaluate_single_query(retrieved_keys, relevant_keys)
@@ -98,13 +108,15 @@ def evaluate(base_url: str, queries: list[dict], timeout: float) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True, help="예: http://127.0.0.1:8090")
+    parser.add_argument("--knowledge-base-id", required=True, type=positive_int,
+                        help="검색 대상 KB id(필수, 양의 정수) — gold 문서가 색인된 KB")
     parser.add_argument("--queries", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
 
     queries = load_queries(args.queries)
-    result = evaluate(args.base_url.rstrip("/"), queries, args.timeout)
+    result = evaluate(args.base_url.rstrip("/"), queries, args.knowledge_base_id, args.timeout)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

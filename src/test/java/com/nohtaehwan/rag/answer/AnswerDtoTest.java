@@ -17,16 +17,23 @@ class AnswerDtoTest {
 
     @Test
     void answerRequest_question이_있으면_검증을_통과한다() {
-        Set<ConstraintViolation<AnswerRequest>> violations = VALIDATOR.validate(new AnswerRequest("질문"));
+        Set<ConstraintViolation<AnswerRequest>> violations = VALIDATOR.validate(new AnswerRequest("질문", 1L));
 
         assertThat(violations).isEmpty();
     }
 
     @Test
     void answerRequest_question이_null이거나_공백이면_검증에_실패한다() {
-        assertThat(VALIDATOR.validate(new AnswerRequest(null))).isNotEmpty();
-        assertThat(VALIDATOR.validate(new AnswerRequest(""))).isNotEmpty();
-        assertThat(VALIDATOR.validate(new AnswerRequest("   "))).isNotEmpty();
+        assertThat(VALIDATOR.validate(new AnswerRequest(null, 1L))).isNotEmpty();
+        assertThat(VALIDATOR.validate(new AnswerRequest("", 1L))).isNotEmpty();
+        assertThat(VALIDATOR.validate(new AnswerRequest("   ", 1L))).isNotEmpty();
+    }
+
+    @Test
+    void answerRequest_knowledgeBaseId가_null이거나_양수가_아니면_검증에_실패한다() {
+        assertThat(VALIDATOR.validate(new AnswerRequest("질문", null))).isNotEmpty();
+        assertThat(VALIDATOR.validate(new AnswerRequest("질문", 0L))).isNotEmpty();
+        assertThat(VALIDATOR.validate(new AnswerRequest("질문", -1L))).isNotEmpty();
     }
 
     @Test

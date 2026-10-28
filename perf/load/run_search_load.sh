@@ -3,7 +3,9 @@
 # Saturation은 1차에서 의도적으로 제외한다(scenarios.json 참고, 별도 승인 후 진행).
 #
 # 사용 예:
-#   ./run_search_load.sh http://127.0.0.1:8090
+#   KNOWLEDGE_BASE_ID=1 ./run_search_load.sh http://127.0.0.1:8090
+#
+# KNOWLEDGE_BASE_ID(필수, 양의 정수)는 데이터셋을 색인한 KB여야 한다 — 기본값 없음.
 set -uo pipefail
 # 주의: -e를 쓰지 않는다 — k6는 threshold(에러율 등)를 넘기면 실패 종료 코드를 반환하는데,
 # threshold 초과는 다음 단계로 계속 진행하며 관찰해야 할 "결과"이지 스크립트를 중단시킬
@@ -11,6 +13,11 @@ set -uo pipefail
 # 포함)가 전혀 실행되지 않는다.
 
 BASE_URL="${1:-http://127.0.0.1:8090}"
+KNOWLEDGE_BASE_ID="${KNOWLEDGE_BASE_ID:-}"
+if ! [[ "$KNOWLEDGE_BASE_ID" =~ ^[1-9][0-9]*$ ]]; then
+  echo "KNOWLEDGE_BASE_ID는 필수 양의 정수다 (입력: '$KNOWLEDGE_BASE_ID')" >&2
+  exit 2
+fi
 STAGES=(smoke warm load stress soak)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,7 +31,7 @@ for stage in "${STAGES[@]}"; do
     -v "$PERF_DIR:/perf:ro" \
     -v "$RESULTS_DIR:/results" \
     -w /perf/load \
-    -e BASE_URL="$BASE_URL" -e STAGE="$stage" \
+    -e BASE_URL="$BASE_URL" -e STAGE="$stage" -e KNOWLEDGE_BASE_ID="$KNOWLEDGE_BASE_ID" \
     grafana/k6 run --summary-export="/results/summary_${stage}.json" search-load.js
   status=$?
   if [ "$status" -ne 0 ]; then

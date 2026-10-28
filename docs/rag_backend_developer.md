@@ -616,6 +616,14 @@ Vector Search
 이런 **ACL-aware retrieval**은 실제 사내 RAG에서 매우 중요한 설계
 문제다.
 
+> **이 프로젝트의 현재 구현(2026-10-28)**: `GET /api/search`·`POST /api/answers`는 필수
+> `knowledgeBaseId`를 받고, 검색 SQL에서 `user_id`·`knowledge_base_id`·`index_status='INDEXED'`
+> 필터를 `LIMIT` 이전에 적용한다(LLM context·sources도 같은 범위). KB가 없거나 다른 사용자 소유면
+> 동일한 404이며 Embedding·LLM 호출 전에 중단한다. 단, 인증이 아직 없어 사용자는 서버의 개발용
+> 사용자(id=1)로 고정되며(`CurrentUserProvider`), 요청의 `userId`는 신뢰하지 않는다 — 위 그림의
+> Authentication/Permission 단계는 후속 작업이다. 상세: `README.md` API 정책,
+> `docs/checklists/2026-10-28_kb-scoped-search-answer.md`.
+
 ------------------------------------------------------------------------
 
 ## 10. RAG 평가 시스템

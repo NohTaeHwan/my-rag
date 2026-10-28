@@ -2,45 +2,86 @@ package com.nohtaehwan.rag.retrieval;
 
 import java.util.Map;
 
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.BindException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.nohtaehwan.rag.exception.InvalidRequestException;
 import com.nohtaehwan.rag.exception.RagException;
+import com.nohtaehwan.rag.user.CurrentUserProvider;
 
 import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 질문과 관련된 Chunk를 검색하는 API. LLM 답변 생성·Reranker는 이번 범위가 아니다.
+ * 질문과 관련된 Chunk를 현재 사용자 소유의 단일 Knowledge Base 안에서 검색하는 API.
+ * LLM 답변 생성·Reranker는 이번 범위가 아니다.
  */
 @Slf4j
 @RestController
 @Tag(name = "검색", description = "질문 embedding 기반 유사도 검색 API")
 public class SearchController {
 
-    private final SearchService searchService;
+    private static final String INVALID_QUERY_MESSAGE = "query는 비어 있을 수 없습니다.";
+    private static final String INVALID_KNOWLEDGE_BASE_ID_MESSAGE = "knowledgeBaseId는 양의 정수여야 합니다.";
+    private static final String KNOWLEDGE_BASE_NOT_FOUND_MESSAGE = "Knowledge Base를 찾을 수 없습니다.";
 
-    public SearchController(SearchService searchService) {
+    private final SearchService searchService;
+    private final CurrentUserProvider currentUserProvider;
+
+    public SearchController(SearchService searchService, CurrentUserProvider currentUserProvider) {
         this.searchService = searchService;
+        this.currentUserProvider = currentUserProvider;
     }
 
-    @Operation(summary = "유사도 검색", description = "질문과 관련된 Chunk를 cosine distance 기준으로 검색한다.")
-    @ApiResponse(responseCode = "200", description = "검색 성공")
-    @ApiResponse(responseCode = "400", description = "query가 없거나 비어 있음")
+    /**
+     * 현재 사용자 소유 Knowledge Base 안에서 질문과 관련된 Chunk를 검색한다. 사용자 ID는 요청에서 받지 않고
+     * {@link CurrentUserProvider}가 결정한다(요청에 userId가 있어도 무시).
+     *
+     * @param request query와 knowledgeBaseId(둘 다 필수)
+     */
+    @Operation(
+            summary = "유사도 검색",
+            description = "현재 사용자 소유의 지정 Knowledge Base에 색인된(INDEXED) 문서 안에서 질문과 관련된 Chunk를 "
+                    + "cosine distance 기준으로 검색한다.")
+    @ApiResponse(responseCode = "200", description = "검색 성공(유효한 KB에 결과가 없으면 빈 목록)")
+    @ApiResponse(responseCode = "400", description = "query가 없거나 비어 있음, knowledgeBaseId가 없거나 양의 정수가 아님")
+    @ApiResponse(responseCode = "404", description = "Knowledge Base가 없거나 현재 사용자 소유가 아님(구분하지 않음)")
     @ApiResponse(responseCode = "500", description = "Embedding 또는 DB 검색 실패")
     @GetMapping("/api/search")
-    public SearchResponse search(
-            @Parameter(description = "검색 질문", example = "결제 취소 방법", required = true) @RequestParam String query) {
-        return searchService.search(query);
+    public SearchResponse search(@Valid @ParameterObject SearchRequest request) {
+        return searchService.search(currentUserProvider.currentUserId(), request.knowledgeBaseId(), request.query());
+    }
+
+    /**
+     * 요청 파라미터 검증·변환 실패(query 누락·공백, knowledgeBaseId 누락·비숫자·0 이하)를 처리한다.
+     * Spring 기본 메시지(예외·타입 정보 포함)는 노출하지 않고 필드별 고정 메시지만 반환한다.
+     */
+    @ExceptionHandler(BindException.class)
+    public ResponseEntity<Map<String, String>> handleBindException(BindException e) {
+        String message = e.hasFieldErrors("query") ? INVALID_QUERY_MESSAGE : INVALID_KNOWLEDGE_BASE_ID_MESSAGE;
+        log.info("검색 요청 검증 실패: {}", message);
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("message", message));
+    }
+
+    /**
+     * 없는 KB와 다른 사용자 소유 KB를 같은 404·같은 메시지로 처리해 존재 여부와 소유자를 노출하지 않는다.
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, String>> handleResponseStatusException(ResponseStatusException e) {
+        log.info("검색 대상 Knowledge Base 없음 또는 접근 불가");
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("message", KNOWLEDGE_BASE_NOT_FOUND_MESSAGE));
     }
 
     /**

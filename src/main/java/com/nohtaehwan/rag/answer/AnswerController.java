@@ -5,14 +5,17 @@ import java.util.Map;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.nohtaehwan.rag.exception.InvalidRequestException;
 import com.nohtaehwan.rag.exception.RagException;
+import com.nohtaehwan.rag.user.CurrentUserProvider;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -21,39 +24,75 @@ import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 질문과 관련된 검색 근거를 바탕으로 LLM 답변을 생성하는 API.
+ * 현재 사용자 소유의 단일 Knowledge Base에서 찾은 검색 근거를 바탕으로 LLM 답변을 생성하는 API.
  */
 @Slf4j
 @RestController
 @Tag(name = "답변", description = "질문에 대해 검색 근거 기반 LLM 답변을 생성하는 API")
 public class AnswerController {
 
+    private static final String INVALID_QUESTION_MESSAGE = "question은 비어 있을 수 없습니다.";
+    private static final String INVALID_KNOWLEDGE_BASE_ID_MESSAGE = "knowledgeBaseId는 양의 정수여야 합니다.";
+    private static final String KNOWLEDGE_BASE_NOT_FOUND_MESSAGE = "Knowledge Base를 찾을 수 없습니다.";
+
     private final AnswerService answerService;
+    private final CurrentUserProvider currentUserProvider;
 
-    public AnswerController(AnswerService answerService) {
+    public AnswerController(AnswerService answerService, CurrentUserProvider currentUserProvider) {
         this.answerService = answerService;
-    }
-
-    @Operation(
-            summary = "답변 생성",
-            description = "질문과 관련된 Chunk를 검색해 근거로 삼아 LLM 답변을 생성한다. 근거가 없으면 LLM을 호출하지 않고 고정 응답을 반환한다.")
-    @ApiResponse(responseCode = "200", description = "답변 생성 성공(근거 부족 시에도 200)")
-    @ApiResponse(responseCode = "400", description = "question이 없거나 비어 있음")
-    @ApiResponse(responseCode = "500", description = "검색 또는 LLM 호출 실패")
-    @PostMapping("/api/answers")
-    public AnswerResponse answer(@Valid @RequestBody AnswerRequest request) {
-        return answerService.answer(request.question());
+        this.currentUserProvider = currentUserProvider;
     }
 
     /**
-     * {@code @Valid} 검증 실패(question 누락·공백)를 처리한다. 프로젝트의 다른 400 응답과 형식을
-     * 맞추기 위해 Spring 기본 오류 형식 대신 {@code {"message": "..."}}로 통일한다.
+     * 지정 Knowledge Base의 검색 근거로 답변을 생성한다. 사용자 ID는 요청 본문에서 받지 않고
+     * {@link CurrentUserProvider}가 결정한다(본문에 userId가 있어도 무시).
+     *
+     * @param request question과 knowledgeBaseId(둘 다 필수)
+     */
+    @Operation(
+            summary = "답변 생성",
+            description = "현재 사용자 소유의 지정 Knowledge Base에 색인된 문서에서 질문과 관련된 Chunk를 검색해 근거로 삼아 "
+                    + "LLM 답변을 생성한다. 근거가 없으면 LLM을 호출하지 않고 고정 응답을 반환한다.")
+    @ApiResponse(responseCode = "200", description = "답변 생성 성공(유효한 KB의 근거 부족 시에도 200)")
+    @ApiResponse(responseCode = "400", description = "question이 없거나 비어 있음, knowledgeBaseId가 없거나 양의 정수가 아님, 본문 형식 오류")
+    @ApiResponse(responseCode = "404", description = "Knowledge Base가 없거나 현재 사용자 소유가 아님(구분하지 않음)")
+    @ApiResponse(responseCode = "500", description = "검색 또는 LLM 호출 실패")
+    @PostMapping("/api/answers")
+    public AnswerResponse answer(@Valid @RequestBody AnswerRequest request) {
+        return answerService.answer(currentUserProvider.currentUserId(), request.knowledgeBaseId(), request.question());
+    }
+
+    /**
+     * {@code @Valid} 검증 실패(question 누락·공백, knowledgeBaseId 누락·0 이하)를 처리한다. 프로젝트의 다른
+     * 400 응답과 형식을 맞추기 위해 Spring 기본 오류 형식 대신 필드별 고정 {@code {"message": "..."}}로 통일한다.
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, String>> handleValidationException(MethodArgumentNotValidException e) {
-        log.info("답변 요청 검증 실패");
+        String message = e.hasFieldErrors("question") ? INVALID_QUESTION_MESSAGE : INVALID_KNOWLEDGE_BASE_ID_MESSAGE;
+        log.info("답변 요청 검증 실패: {}", message);
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(Map.of("message", "question은 비어 있을 수 없습니다."));
+                .body(Map.of("message", message));
+    }
+
+    /**
+     * 본문이 없거나 JSON 형식·타입이 맞지 않는 요청(예: knowledgeBaseId가 문자열)을 처리한다.
+     * Jackson 오류 상세(클래스·필드 타입 정보)는 응답에 노출하지 않는다.
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, String>> handleNotReadableException(HttpMessageNotReadableException e) {
+        log.info("답변 요청 본문을 읽을 수 없음");
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("message", "요청 본문 형식이 올바르지 않습니다."));
+    }
+
+    /**
+     * 없는 KB와 다른 사용자 소유 KB를 같은 404·같은 메시지로 처리해 존재 여부와 소유자를 노출하지 않는다.
+     */
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, String>> handleResponseStatusException(ResponseStatusException e) {
+        log.info("답변 대상 Knowledge Base 없음 또는 접근 불가");
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(Map.of("message", KNOWLEDGE_BASE_NOT_FOUND_MESSAGE));
     }
 
     /**

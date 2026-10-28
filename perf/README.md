@@ -34,4 +34,18 @@ docker exec rag-postgres psql -U rag -d rag_db -c "DELETE FROM tb_document WHERE
 6. k6로 부하 테스트 (`load/`)
 7. `report/generate_report.py`로 보고서·차트 생성
 
+### knowledgeBaseId 필수 입력 (2026-10-28~)
+
+`/api/search`·`/api/answers`는 `knowledgeBaseId`가 필수라(없으면 400) 검색·답변 호출자는 모두 KB id를 명시로 받는다. 기본값(KB 1)을 암묵적으로 넣지 않으며, 누락·0·음수·숫자 아님은 요청 전에 실패한다.
+
+| 호출자 | 입력 방법 |
+|---|---|
+| `evaluation/evaluate_retrieval.py`, `evaluation/evaluate_answers.py` | `--knowledge-base-id <양의 정수>` (필수) |
+| `load/run_search_load.sh`, `load/run_answer_load.sh` | 환경변수 `KNOWLEDGE_BASE_ID=<양의 정수>` (필수, k6 컨테이너에 그대로 전달) |
+| `load/search-load.js`, `load/answer-load.js` (k6 직접 실행) | 환경변수 `KNOWLEDGE_BASE_ID` (필수) |
+
+**선택한 KB와 데이터셋이 일치해야 한다**: 3단계에서 `perf-test/` 문서를 색인한 KB(현재 색인 API는 개발용 사용자 1의 기본 KB에 색인)의 id를 넘겨야 한다. gold 문서(`relevant_sources`/`relevant_chunk_keys`)가 그 KB에 `INDEXED` 상태로 있지 않으면 Recall/MRR·source_hit·fact_coverage가 0에 가깝게 나와 정확도 해석이 무효다. 또한 타인 소유·존재하지 않는 KB는 404가 된다.
+
+오프라인 입력 검증 테스트(네트워크·Spark·DB 미사용, k6 테스트는 loopback stub만 사용): `python3 perf/test_knowledge_base_id.py`
+
 자세한 각 단계 명령은 `dataset/README.md`, `evaluation/README.md`(작성 예정), `load/README.md`(작성 예정)에 정리한다.

@@ -1,5 +1,6 @@
 package com.nohtaehwan.rag;
 
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -39,10 +40,14 @@ class SwaggerDocumentationTest {
     void openApiJson_검색_API의_parameter와_response가_포함된다() throws Exception {
         mockMvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/search'].get.parameters[0].name").value("query"))
-                .andExpect(jsonPath("$.paths['/api/search'].get.parameters[0].required").value(true))
+                .andExpect(jsonPath("$.paths['/api/search'].get.parameters[?(@.name == 'query')].required")
+                        .value(true))
+                .andExpect(jsonPath("$.paths['/api/search'].get.parameters[?(@.name == 'knowledgeBaseId')].required")
+                        .value(true))
+                .andExpect(jsonPath("$.paths['/api/search'].get.parameters[?(@.name == 'userId')]").isEmpty())
                 .andExpect(jsonPath("$.paths['/api/search'].get.responses['200']").exists())
                 .andExpect(jsonPath("$.paths['/api/search'].get.responses['400']").exists())
+                .andExpect(jsonPath("$.paths['/api/search'].get.responses['404']").exists())
                 .andExpect(jsonPath("$.paths['/api/search'].get.responses['500']").exists());
     }
 
@@ -64,8 +69,13 @@ class SwaggerDocumentationTest {
                         .value("#/components/schemas/AnswerRequest"))
                 .andExpect(jsonPath("$.paths['/api/answers'].post.responses['200']").exists())
                 .andExpect(jsonPath("$.paths['/api/answers'].post.responses['400']").exists())
+                .andExpect(jsonPath("$.paths['/api/answers'].post.responses['404']").exists())
                 .andExpect(jsonPath("$.paths['/api/answers'].post.responses['500']").exists())
                 .andExpect(jsonPath("$.components.schemas.AnswerRequest.properties.question").exists())
+                .andExpect(jsonPath("$.components.schemas.AnswerRequest.properties.knowledgeBaseId").exists())
+                .andExpect(jsonPath("$.components.schemas.AnswerRequest.properties.userId").doesNotExist())
+                .andExpect(jsonPath("$.components.schemas.AnswerRequest.required",
+                        containsInAnyOrder("question", "knowledgeBaseId")))
                 .andExpect(jsonPath("$.components.schemas.AnswerResponse.properties.answer").exists())
                 .andExpect(jsonPath("$.components.schemas.AnswerResponse.properties.sources").exists())
                 .andExpect(jsonPath("$.components.schemas.AnswerSource.properties.documentId").exists())

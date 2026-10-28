@@ -342,10 +342,14 @@ docker exec rag-postgres psql -U rag -d rag_db -c 'SELECT COUNT(*) FROM tb_docum
 
 ## Task 10 — 검색·답변 E2E 검증
 
+> 2026-10-28부터 `/api/search`·`/api/answers`는 `knowledgeBaseId`가 필수다(없으면 400). 아래 명령은 그
+> 이후 형식(`knowledgeBaseId=1`, 기본 KB)으로 갱신했으며, 체크 결과는 그 이전 실행 기록이다.
+
 **검색**
 ```bash
 curl -fsS --get http://127.0.0.1:8090/api/search \
-  --data-urlencode 'query=주문을 취소하려면 어떻게 해야 하나요?'
+  --data-urlencode 'query=주문을 취소하려면 어떻게 해야 하나요?' \
+  --data-urlencode 'knowledgeBaseId=1'
 ```
 - [x] HTTP 200, distance 오름차순(0.305→0.385), 5개 전부 `주문취소정책.md`에서 정확히 매칭
 
@@ -353,7 +357,7 @@ curl -fsS --get http://127.0.0.1:8090/api/search \
 ```bash
 curl -fsS -X POST http://127.0.0.1:8090/api/answers \
   -H 'Content-Type: application/json' \
-  -d '{"question":"환불은 며칠 정도 걸리나요?"}'
+  -d '{"question":"환불은 며칠 정도 걸리나요?","knowledgeBaseId":1}'
 ```
 - [x] HTTP 200, answer 비어있지 않음(실제 답변 정상 생성 — Task 6에서 우려했던 reasoning 모드로 인한
       빈 응답 리스크가 이 질문에서는 재현 안 됨), sources 대부분 `환불정책.md`
@@ -362,7 +366,7 @@ curl -fsS -X POST http://127.0.0.1:8090/api/answers \
 ```bash
 curl -fsS -X POST http://127.0.0.1:8090/api/answers \
   -H 'Content-Type: application/json' \
-  -d '{"question":"오늘 날씨 어때요?"}'
+  -d '{"question":"오늘 날씨 어때요?","knowledgeBaseId":1}'
 ```
 - [x] (수정된 이해) DB에 문서가 이미 있어 벡터 검색은 항상 top-K를 반환하므로 `sources`가 완전히
       비지는 않음(distance가 0.60~0.65로 관련 질문 대비 훨씬 높게 나와 실제로 약한 매칭임은 확인됨).
@@ -374,7 +378,7 @@ curl -fsS -X POST http://127.0.0.1:8090/api/answers \
 ```bash
 curl -i -X POST http://127.0.0.1:8090/api/answers \
   -H 'Content-Type: application/json' \
-  -d '{"question":"   "}'
+  -d '{"question":"   ","knowledgeBaseId":1}'
 ```
 - [x] HTTP 400, `{"message":"question은 비어 있을 수 없습니다."}`, 내부 상세 미노출
 
@@ -420,7 +424,7 @@ docker compose stop rag-db
 curl -fsS http://127.0.0.1:8090/health
 time curl -i -X POST http://127.0.0.1:8090/api/answers \
   -H 'Content-Type: application/json' \
-  -d '{"question":"환불은 며칠 정도 걸리나요?"}'
+  -d '{"question":"환불은 며칠 정도 걸리나요?","knowledgeBaseId":1}'
 # 복구
 docker compose start rag-db
 sleep 5

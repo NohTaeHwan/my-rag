@@ -3,6 +3,7 @@ package com.nohtaehwan.rag.answer;
 import java.util.List;
 
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.nohtaehwan.rag.exception.InvalidRequestException;
 import com.nohtaehwan.rag.exception.RagException;
@@ -48,19 +49,23 @@ public class AnswerService {
     }
 
     /**
-     * 질문에 대한 답변을 생성한다.
+     * 현재 사용자 소유 Knowledge Base의 검색 근거만으로 질문에 대한 답변을 생성한다. context와 sources도
+     * 같은 범위의 검색 결과에서만 만들어진다.
      *
-     * @param question 사용자 질문
+     * @param userId          현재 사용자 ID(서버가 결정한 값, 클라이언트 입력 아님)
+     * @param knowledgeBaseId 근거를 검색할 Knowledge Base ID
+     * @param question        사용자 질문
      * @return 답변과 실제 prompt에 포함된 근거(검색 결과가 없거나 context가 비면 고정 근거 부족 응답)
-     * @throws InvalidRequestException question이 null이거나 공백만 있을 때
+     * @throws InvalidRequestException question이 null이거나 공백만 있을 때, knowledgeBaseId가 양의 정수가 아닐 때
+     * @throws ResponseStatusException KB가 없거나 다른 사용자 소유일 때(404, LLM 호출 전)
      * @throws RagException            검색(embedding/DB) 또는 LLM 호출이 실패했을 때
      */
-    public AnswerResponse answer(String question) {
+    public AnswerResponse answer(Long userId, Long knowledgeBaseId, String question) {
         if (question == null || question.isBlank()) {
             throw new InvalidRequestException("question은 비어 있을 수 없습니다.");
         }
 
-        SearchResponse searchResponse = searchService.search(question);
+        SearchResponse searchResponse = searchService.search(userId, knowledgeBaseId, question);
         if (searchResponse.results().isEmpty()) {
             log.info("답변 생성: 검색 결과 없음, 근거 부족 응답 반환");
             return noEvidenceResponse();
@@ -79,8 +84,8 @@ public class AnswerService {
                 .map(AnswerService::toSource)
                 .toList();
 
-        log.info("답변 생성 완료: questionLength={}, contextItemCount={}, answerLength={}",
-                question.length(), sources.size(), answer.length());
+        log.info("답변 생성 완료: knowledgeBaseId={}, questionLength={}, contextItemCount={}, answerLength={}",
+                knowledgeBaseId, question.length(), sources.size(), answer.length());
         return new AnswerResponse(answer, sources);
     }
 

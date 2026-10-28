@@ -191,12 +191,12 @@ _last update: 2026-09-08_
 - Chunk가 0개인 빈 문서도 문서 수(`documentCount`)에는 포함하고 Chunk 수(`chunkCount`)에는 포함하지 않는다.
 - 실패 응답은 DB·Embedding API 상세 원인을 노출하지 않고 `{"message": "문서 색인에 실패했습니다."}`만 반환한다.
 
-**`GET /api/search?query=...` 정책**
+**`GET /api/search?query=...&knowledgeBaseId=...` 정책**
 
 요청 예시:
 
 ```
-GET /api/search?query=결제 취소 방법
+GET /api/search?query=결제 취소 방법&knowledgeBaseId=1
 ```
 
 응답 예시:
@@ -217,8 +217,11 @@ GET /api/search?query=결제 취소 방법
 ```
 
 - `query`는 필수 파라미터이며 null·빈 문자열·공백만 있으면 400을 반환한다.
+- `knowledgeBaseId`는 필수(양의 정수)다. 누락·비숫자·0 이하면 400(`{"message": "knowledgeBaseId는 양의 정수여야 합니다."}`). 2026-10-28부터 `query`만 보내는 기존 요청은 400이다.
+- 검색 범위는 현재 사용자 소유의 해당 Knowledge Base에 `INDEXED` 상태로 색인된 문서로만 제한된다(SQL `WHERE`가 정렬·`LIMIT`보다 먼저 적용). 사용자 ID는 요청으로 받지 않으며(`userId`를 보내도 무시) 인증 도입 전까지 서버가 개발용 사용자(id=1)로 고정한다 — 실제 다중 사용자 보호가 아니다.
+- Knowledge Base가 없거나 다른 사용자 소유면 둘을 구분하지 않고 404 `{"message": "Knowledge Base를 찾을 수 없습니다."}`를 반환하며, 이때 Embedding API를 호출하지 않는다.
 - Top-K는 요청으로 받지 않고 `retrieval.top-k` 설정(기본 5)을 따른다.
-- 결과가 없으면 오류가 아니라 `results: []`를 반환한다. 결과는 `distance`(pgvector cosine distance, 낮을수록 유사) 오름차순이다.
+- 유효한 Knowledge Base에 결과가 없으면 오류가 아니라 `results: []`를 반환한다. 결과는 `distance`(pgvector cosine distance, 낮을수록 유사) 오름차순이다.
 - embedding 원본 벡터는 응답에 포함하지 않는다.
 - 실패 응답은 상세 원인을 노출하지 않고 `{"message": "..."}`만 반환한다(400은 검증 메시지, 500은 고정 메시지).
 
@@ -228,7 +231,8 @@ GET /api/search?query=결제 취소 방법
 
 ```json
 {
-  "question": "결제 완료 후 주문을 취소하려면?"
+  "question": "결제 완료 후 주문을 취소하려면?",
+  "knowledgeBaseId": 1
 }
 ```
 
@@ -250,7 +254,9 @@ GET /api/search?query=결제 취소 방법
 ```
 
 - 내부적으로 `GET /api/search`와 동일한 검색을 재사용한다. `question`은 필수이며 null·빈 문자열·공백만 있으면 400.
-- 검색 결과가 없거나(또는 있어도 `llm.max-context-chars` 제한으로 근거가 하나도 안 들어가면) LLM을 호출하지 않고 `{"answer": "질문에 답할 수 있는 근거 문서를 찾지 못했습니다.", "sources": []}`를 200으로 반환한다.
+- `knowledgeBaseId`는 필수(JSON 정수, 양수)다. 누락·0 이하는 400 `{"message": "knowledgeBaseId는 양의 정수여야 합니다."}`, 실수(`1.5`)·문자열·boolean 등 형식 오류는 400 `{"message": "요청 본문 형식이 올바르지 않습니다."}`. 2026-10-28부터 `question`만 보내는 기존 요청은 400이다.
+- LLM context와 `sources`는 검색과 같은 범위(현재 사용자·해당 KB·`INDEXED`)의 결과로만 만들어진다. 없는 KB·다른 사용자 소유 KB는 404이며 Embedding·LLM을 호출하지 않는다. 사용자 ID는 요청 본문으로 받지 않는다(보내도 무시).
+- 유효한 Knowledge Base에서 검색 결과가 없거나(또는 있어도 `llm.max-context-chars` 제한으로 근거가 하나도 안 들어가면) LLM을 호출하지 않고 `{"answer": "질문에 답할 수 있는 근거 문서를 찾지 못했습니다.", "sources": []}`를 200으로 반환한다.
 - `sources`는 실제 LLM prompt에 포함된 검색 결과만 담으며 `content`는 포함하지 않는다(출처 식별·distance만).
 - LLM 호출은 OpenAI-compatible `POST /chat/completions`를 사용하며(`LLM_BASE_URL`/`LLM_MODEL`/`LLM_API_KEY` 등으로 설정), 실제 사용 서버·모델·SDK는 이 설정값에 따라 달라진다(특정 provider SDK를 코드에 고정하지 않음).
 - 검색·LLM 호출을 DB 트랜잭션으로 묶지 않는다(읽기 전용 흐름).

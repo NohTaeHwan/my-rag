@@ -109,3 +109,13 @@ if (envFile.exists()) {
         environment(envMap)
     }
 }
+
+// 기본 test와 Claude Stop Hook은 실DB에 연결하지 않는다. DB 검증은 격리 전용 task에서만 수행한다.
+tasks.named('test') {
+    doFirst {
+        environment.keySet().removeIf { it.toUpperCase(Locale.ROOT) ==~ /SPRING[._].*/ }
+        ['JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS'].each { environment.remove(it) }
+        systemProperty 'spring.datasource.url', 'jdbc:postgresql://127.0.0.1:1/blocked'
+        systemProperty 'spring.flyway.enabled', 'false'
+    }
+}

@@ -2,7 +2,7 @@
 // search_query_mix 비율대로 M 데이터셋 질의를 뽑아 보낸다.
 //
 // 사용 예 (Spark에서, run_search_load.sh 참고):
-//   BASE_URL=http://127.0.0.1:8090 STAGE=smoke k6 run search-load.js
+//   BASE_URL=http://127.0.0.1:8090 STAGE=smoke KNOWLEDGE_BASE_ID=1 k6 run search-load.js
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Counter, Trend } from 'k6/metrics';
@@ -10,6 +10,12 @@ import { Counter, Trend } from 'k6/metrics';
 const scenarios = JSON.parse(open('./scenarios.json'));
 const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:8090';
 const STAGE = __ENV.STAGE || 'smoke';
+// knowledgeBaseId는 서버에서 필수다(없으면 400). 기본값을 두지 않고 명시 입력만 받는다 —
+// 잘못된 KB로 조용히 측정하지 않도록 init 단계(요청 전)에서 바로 실패시킨다.
+const KNOWLEDGE_BASE_ID = __ENV.KNOWLEDGE_BASE_ID;
+if (!/^[1-9][0-9]*$/.test(KNOWLEDGE_BASE_ID || '') || !Number.isSafeInteger(Number(KNOWLEDGE_BASE_ID))) {
+  throw new Error(`KNOWLEDGE_BASE_ID는 필수 양의 정수다 (입력: ${KNOWLEDGE_BASE_ID})`);
+}
 const cfg = scenarios.search[STAGE];
 if (!cfg) {
   throw new Error(`알 수 없는 STAGE: ${STAGE} (가능: ${Object.keys(scenarios.search).join(', ')})`);
@@ -62,7 +68,7 @@ export const options = {
 
 export default function () {
   const question = pickQuestion();
-  const url = `${BASE_URL}/api/search?query=${encodeURIComponent(question)}`;
+  const url = `${BASE_URL}/api/search?query=${encodeURIComponent(question)}&knowledgeBaseId=${KNOWLEDGE_BASE_ID}`;
   const res = http.get(url, {
     timeout: '35s',
     headers: { 'X-Request-Id': randomRequestId() },
