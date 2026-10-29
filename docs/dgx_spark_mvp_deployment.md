@@ -1,6 +1,8 @@
 # DGX Spark MVP 배포 문서
 
-> **2026-10-23 변경 주의:** 아래 PASS 기록은 당시 배포 검증의 이력이다. 현재 개발 중인 앱 설정은 Flyway 자동 적용을 기본 비활성화하고 `DB_APP_USERNAME`/`DB_APP_PASSWORD`를 요구한다. **Spark DB의 제한 계정 생성·V3 적용은 아직 하지 않았다.** 태환님이 migration을 검토·승인하고 Spark에 별도 제한 계정 및 환경변수를 준비하기 전에는 현재 변경사항을 빌드·배포하지 않는다. 기존 Spark 데이터/서비스에는 이번 작업에서 접근하지 않았다.
+> **2026-10-23 변경 주의:** 아래 PASS 기록은 당시 배포 검증의 이력이다. 현재 개발 중인 앱 설정은 Flyway 자동 적용을 기본 비활성화하고 `DB_APP_USERNAME`/`DB_APP_PASSWORD`를 요구한다. 기존 Spark 데이터/서비스에는 이번 작업에서 접근하지 않았다.
+>
+> **2026-10-29 상태 정정:** 태환님 확인 — Spark DB에 V4가 적용되어 있다(사용자 확인 사실, 저장소 작업에서 DB에 직접 접속해 Flyway 이력·제약을 검증하지는 않았다). 이전에 이 자리에 있던 "제한 계정 생성·V3 적용은 아직 하지 않았다 / 빌드·배포하지 않는다" 문구는 이 확인으로 대체한다. Spark의 제한 계정(`DB_APP_USERNAME`/`DB_APP_PASSWORD`)·앱 환경변수 준비 여부는 이 확인 범위에 포함되지 않아 **미확인**이며, 배포 전에 태환님이 확인한다. 최근 CI/CD 변경(프런트엔드 게이트, SHA 고정 배포, concurrency)은 아직 GitHub Actions·Spark에서 실행되지 않았다.
 
 > 상태(2026-09-10): **Task 3~11 전부 PASS — 계획서의 배포 검증 절차 완료.** Postgres·하드웨어/Java17·
 > Embedding·LLM·Docker 배포(GHCR pull, ARM64 빌드 수정)·재시작 정책·E2E 검증 데이터·검색/답변/장애
@@ -241,6 +243,14 @@ curl -fsS -X POST "${LLM_BASE_URL}/chat/completions" \
 - `Dockerfile`: 멀티스테이지 빌드(`eclipse-temurin:17-jdk`로 빌드 → `eclipse-temurin:17-jre`로 실행). Spark 호스트의 Java 8/17 문제와 무관하게 동작한다.
 - 컨테이너는 `network_mode: host`로 띄운다 — 기존에 검증된 `127.0.0.1:5433`(DB)/`8003`(Embedding)/`8002`(LLM) 값을 그대로 재사용하기 위함.
 - **이미지 전달은 GitHub Container Registry(ghcr.io) 경유**로 최종 결정(처음엔 `docker save`/`load`+scp로 시작했다가, 레지스트리가 표준적인 방식이라 전환). `ci.yml`이 `main` push마다 `ghcr.io/nohtaehwan/my-rag:latest`와 `:<commit-sha>`를 빌드·푸시한다. Spark는 그 이미지를 그냥 `docker compose pull`로 받는다.
+- **(2026-10-29 변경, 로컬 테스트만·실배포 미검증) 배포 이미지 SHA 고정**:
+  - `cd.yml`은 `latest`가 아니라 커밋 SHA 이미지를 배포한다. 자동 실행은 같은 저장소 `main` push CI의 `head_sha`를 쓰고, 수동 실행은 `sha` 입력이 필수이며 `main` 이력에 있어야 한다.
+  - 그 SHA로 checkout한 `deploy.sh`를 scp한다. Spark 접속 전에 SHA 형식(40자리 소문자 hex), checkout HEAD 일치, `docker manifest inspect`로 이미지 존재, deploy.sh의 SHA 고정 지원 여부를 확인하고 하나라도 어긋나면 실패한다.
+  - `deploy.sh`는 `DEPLOY_SHA`를 검증한 뒤 Spark의 `compose/docker-compose.app.yml`은 그대로 두고, image 한 항목만 바꾸는 임시 override(`-f compose.yml -f override`)로 `pull`·`up`한다. env_file·volumes·`network_mode` 등은 Spark 파일 설정을 유지한다.
+  - 롤백은 직전 실행 이미지를 로컬 `my-rag:previous`로 태그해 두었다가, health 실패 시 override image를 `my-rag:previous`로 바꿔 재기동한다. SHA·`latest` 태그는 재태깅하지 않는다.
+  - **주의**: Spark에서 override 없이 `docker compose up`을 직접 실행하면 Compose 파일의 `latest`로 바뀐다. 수동 재기동은 `DEPLOY_SHA=<SHA>`로 deploy.sh를 실행한다.
+  - 로컬 검증: `bash deploy/dgx-spark/deploy_test.sh`(가짜 docker·curl).
+
 - **아키텍처 버그 발견·수정 (2026-09-09)**: GitHub Actions 러너는 x86_64라 기본 `docker build`는 AMD64 이미지를 만든다. 이걸 ARM64인 Spark에서 실행하면 `exec /opt/java/openjdk/bin/java: exec format error`로 컨테이너가 재시작을 무한 반복한다(실제로 겪음). `ci.yml`에 `docker/setup-qemu-action` + `docker/setup-buildx-action` + `docker/build-push-action`(`platforms: linux/arm64`)을 추가해 명시적으로 ARM64용으로 빌드하도록 고쳤다. 로컬(맥북, Apple Silicon)에서 빌드할 땐 우연히 아키텍처가 맞아서 이 문제가 안 보였다.
 - **사전 준비(1회, GitHub 웹에서 수동)**: 저장소 → Packages → `my-rag` 패키지 → Package settings → Visibility를 **Public**으로 변경. 이미지에 secret이 baked-in되지 않으므로 public이어도 안전하고, Spark에서 별도 GHCR 로그인 없이 pull 가능해진다.
 
@@ -528,9 +538,11 @@ pg_dump --version
 지금 규모(개인 프로젝트, Spark 한 대)에서는 급한 게 없지만, 서비스가 커지거나 사용자가 늘면 순서대로 볼 만한 항목들이다.
 
 **배포 안정성**
-- `deploy.sh`의 롤백이 `latest`/`previous` 딱 두 슬롯뿐 — 커밋 SHA 기준으로 이미지를 버전 관리하고 "이 SHA로 롤백"하는 방식이 더 견고함(2단계 이전으로는 지금 구조로 못 돌아감).
+- `deploy.sh`의 자동 롤백은 직전 이미지(`my-rag:previous`) 한 슬롯뿐이다. 2026-10-29부터 배포가 커밋 SHA 이미지로 고정되어, 더 이전 버전은 CD 수동 실행(`sha` 입력)으로 그 SHA를 다시 배포할 수 있다(실배포 미검증).
 - 무중단 배포 아님 — 재배포 시 몇 초 다운타임 발생. 필요해지면 blue-green이나 "새 컨테이너 healthy 확인 후 기존 종료" 방식 검토.
-- `cd.yml`에 concurrency 제어 없음(`ci.yml`엔 있음) — 짧은 간격으로 여러 커밋이 푸시되면 배포가 겹쳐 돌 수 있음.
+- ~~`cd.yml`에 concurrency 제어 없음~~ → 2026-10-29 deploy job에 `concurrency: cd-prd-spark`(`cancel-in-progress: false`) 추가, 배포 겹침 방지(실행 미검증).
+  - 남은 한계: 그룹당 대기 1개만 유지되어 새 run이 이전 대기 run을 취소한다. 중간 SHA는 건너뛸 수 있고, 오래된 SHA 수동 실행이 대기 중인 최신 run을 밀어낼 수 있다.
+  - 승인자가 run의 SHA를 확인해야 한다.
 
 **관측성(Observability)**
 - 모니터링/알림 체계 없음 — 서비스가 죽어도 능동적으로 알려주는 게 없음(Slack/Discord webhook, uptime 체크 서비스 등). 지금은 사람이 수동 확인해야 함.

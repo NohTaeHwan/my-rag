@@ -6,6 +6,8 @@ Markdown 문서를 넣고, 질문에 관련된 Chunk와 출처를 결과값으�
 
 현재는 프로토타입이지만 해당 내용을 활용해서 여러 상황에서 사용하는 RAG 로 사용하는게 주 목표입니다.
 
+같은 JAR가 `/`에서 최소 웹 채팅 화면(`frontend/`, React + TypeScript + Vite)을 함께 제공합니다. 질문을 `POST /api/answers`로 보내고 답변과 출처(문서 제목·문서 ID·구간 번호)를 표시합니다. 자세한 범위와 한계는 [웹 채팅 UI](#웹-채팅-ui)를 참고하세요.
+
 
 
 
@@ -22,12 +24,14 @@ Markdown 문서를 넣고, 질문에 관련된 Chunk와 출처를 결과값으�
 | LLM | OpenAI-compatible `/chat/completions` API (특정 provider SDK 미사용) |
 | API 문서 | Springdoc OpenAPI 3 + Swagger UI |
 | Build | Gradle (`./gradlew`) |
+| Web UI | React 19 + TypeScript + Vite (`frontend/`, Node 22) |
 
 ## 시작하기
 
 ### 1. 사전 준비
 
 - Java 17
+- Node.js 22 / npm (웹 화면 빌드·`bootJar`·`bootRun`에만 필요, `./gradlew test`에는 불필요)
 - Docker / Docker Compose (PostgreSQL 실행용)
 - BGE-M3 Embedding API 접근 정보 (예: DGX Spark 주소)
 
@@ -73,7 +77,7 @@ set -a; source .env; set +a
 | `LLM_MAX_TOKENS` | 아니오 | `512` | LLM 응답의 최대 토큰 수 |
 | `LLM_TEMPERATURE` | 아니오 | `0.0` | LLM 샘플링 temperature (0~2) |
 
-`EMBEDDING_BASE_URL`/`LLM_BASE_URL`은 로컬 더미 값이라 실제 서버를 쓰려면 반드시 채워야 합니다. 로컬 DB 컨테이너에는 `DB_PASSWORD`, 앱에는 `DB_APP_PASSWORD`가 필요합니다. `LLM_API_KEY`는 `.env`에만 두고 커밋하지 않습니다. Spark에는 제한 계정과 앱 전용 환경변수가 아직 준비되지 않았으므로 이 버전을 그대로 배포하지 않습니다.
+`EMBEDDING_BASE_URL`/`LLM_BASE_URL`은 로컬 더미 값이라 실제 서버를 쓰려면 반드시 채워야 합니다. 로컬 DB 컨테이너에는 `DB_PASSWORD`, 앱에는 `DB_APP_PASSWORD`가 필요합니다. `LLM_API_KEY`는 `.env`에만 두고 커밋하지 않습니다. Spark DB에는 V4가 적용되어 있습니다(2026-10-29 사용자 확인). Spark의 제한 계정·앱 전용 환경변수 준비 여부는 배포 전에 별도로 확인합니다.
 
 ### 4. 애플리케이션 실행
 
@@ -84,7 +88,8 @@ set -a; source .env; set +a
 ### 5. 테스트
 
 ```bash
-./gradlew test
+./gradlew test                      # 백엔드. DB 접속은 127.0.0.1:1로 차단되고 격리 DB 태그는 제외된다
+cd frontend && npm ci && npm test -- --run && npm run build   # 웹 화면(모의 fetch만 사용)
 ```
 
 ### 6. API 문서 (Swagger UI)
@@ -262,9 +267,24 @@ GET /api/search?query=결제 취소 방법&knowledgeBaseId=1
 - 검색·LLM 호출을 DB 트랜잭션으로 묶지 않는다(읽기 전용 흐름).
 - 실패 응답은 상세 원인(URL·API Key·prompt·SQL 등)을 노출하지 않고 `{"message": "..."}`만 반환한다.
 
+## 웹 채팅 UI
+
+`frontend/`의 React 화면을 Spring Boot가 같은 출처의 `/`에서 제공합니다(별도 서버 없음).
+
+- 기능: 질문 입력(Enter 전송·Shift+Enter 줄바꿈), 로딩·오류 안내, 답변 평문 표시, 출처(문서 제목·문서 ID·구간 번호) 목록, 새 대화(진행 중 요청 취소), 120초 응답 대기 한도, 데스크톱/모바일(390px) 반응형.
+- 한계:
+  - 인증이 없다. 서버는 개발용 고정 사용자로 동작하고, 화면은 Knowledge Base ID `1`(표시 이름 "기본 지식 공간")로만 질문한다. KB 목록 조회·선택, 문서 업로드, 대화 저장·다중 턴 문맥, 스트리밍, 출처 원문 미리보기는 없다.
+  - 질문을 여러 개 보내도 매번 독립 질문으로 처리한다.
+  - 시간 초과나 새 대화는 브라우저의 대기만 멈춘다. 서버 처리 취소는 보장하지 않는다.
+- 로컬 개발: 백엔드를 `./gradlew bootRun`(8080)으로 띄운 뒤 `cd frontend && npm ci && npm run dev`. Vite 개발 서버가 `/api`를 `http://127.0.0.1:8080`으로 프록시하므로 백엔드가 떠 있지 않으면 답변 요청이 `ECONNREFUSED`(화면에는 오류 안내)로 실패한다.
+- 패키징:
+  - `./gradlew bootJar`는 `frontendBuild`(`npm ci && npm run build`)를 자동 실행해 최신 번들을 JAR의 `BOOT-INF/classes/static/`에 넣고, `index.html`이 참조하는 JS·CSS가 JAR에 있는지 검사한다.
+  - `./gradlew bootRun`도 빌드한 `frontend/dist`를 `/`에서 제공한다.
+  - `./gradlew test`는 Node 없이 fixture(`src/test/resources/static/index.html`)로 라우팅만 확인한다.
+
 ## 배포
 
-`Dockerfile`(멀티스테이지: `eclipse-temurin:17-jdk` 빌드 → `eclipse-temurin:17-jre` 실행)로 컨테이너 이미지를 만듭니다.
+`Dockerfile`(멀티스테이지: `node:22-alpine`에서 웹 화면 빌드 → `eclipse-temurin:17-jdk`에서 그 번들을 넣어 `bootJar` → `eclipse-temurin:17-jre` 실행)로 컨테이너 이미지를 만듭니다.
 
 ```bash
 docker build -t my-rag:latest .
@@ -272,8 +292,19 @@ docker build -t my-rag:latest .
 
 GitHub Actions로 CI/CD가 구성되어 있습니다.
 
-- `.github/workflows/ci.yml` — PR·`main` push마다 테스트 실행, `main` push 성공 시 ARM64 이미지를 빌드해 GitHub Container Registry(`ghcr.io/nohtaehwan/my-rag`)에 `latest`/커밋 SHA 태그로 push
-- `.github/workflows/cd.yml` — CI 성공 시 자동 트리거(사람 승인 후 진행), Tailscale로 배포 대상 서버에 접속해 최신 이미지를 pull·재기동·헬스체크
+- `.github/workflows/ci.yml` — PR·`main` push마다 Node 22로 `frontend/`의 `npm ci`·`npm test -- --run`·`npm run build`와 `./gradlew clean test`를 실행. `main` push에서 이 test job이 성공해야만 ARM64 이미지를 빌드해 GitHub Container Registry(`ghcr.io/nohtaehwan/my-rag`)에 `latest`/커밋 SHA 태그로 push
+- `.github/workflows/cd.yml` — `prd-spark` Environment의 사람 승인 후에만 진행한다. Tailscale로 배포 대상 서버에 접속해 **커밋 SHA 태그 이미지**(`ghcr.io/nohtaehwan/my-rag:<SHA>`)를 pull·재기동하고 `/health`를 확인한다. `latest`는 배포에 쓰지 않는다.
+  - 자동: 같은 저장소 `main` push로 실행된 CI가 성공하면 그 CI의 `head_sha`로 트리거된다.
+  - 수동: Actions → CD (DGX Spark) → Run workflow에서 `sha`(40자리 커밋 SHA, `main` 이력)를 반드시 입력한다.
+  - SHA 형식 오류, checkout 불일치, 이미지 미존재, SHA 고정 이전 커밋은 Spark 접속 전에 실패한다.
+  - 배포 job은 `concurrency: cd-prd-spark`(`cancel-in-progress: false`)로 직렬화된다. 진행 중 배포·롤백은 끝까지 실행되고 겹쳐 돌지 않는다.
+    - GitHub는 그룹당 실행 1개와 대기 1개만 유지한다. 대기 중에 새 CD run(자동·수동)이 들어오면 이전 대기 run은 **취소**된다.
+    - 그래서 연속 push 시 중간 SHA는 배포되지 않을 수 있고, 나중에 들어온 **오래된 SHA의 수동 실행**이 대기 중인 최신 SHA run을 밀어낼 수도 있다. 승인 전에 run의 SHA를 확인한다.
+    - 오래된 SHA를 승인하면 그 버전으로 되돌아간다(롤백 용도로는 의도된 동작).
+
+흐름: `main` push → CI(프런트엔드·백엔드 테스트) → ARM64 이미지(`:<SHA>`, `:latest`) 발행 → CD 대기 → `prd-spark` 사람 승인 → 그 SHA 이미지로 Spark 배포.
+
+> Spark의 `compose/docker-compose.app.yml`은 CD가 수정하지 않는다. `deploy.sh`가 배포 때마다 image 한 항목만 덮는 임시 override를 함께 넘긴다. Spark에서 override 없이 `docker compose up`을 직접 실행하면 Compose 파일의 `latest` 이미지로 바뀌므로, 수동 재기동도 `DEPLOY_SHA=<SHA> deploy.sh` 또는 CD 수동 실행으로 한다.
 
 실제 DGX Spark 배포 절차(하드웨어 점검부터 Docker Compose 구성, 실패 시 확인 방법, 알려진 보안/운영 리스크까지)는 [`docs/dgx_spark_mvp_deployment.md`](docs/dgx_spark_mvp_deployment.md)에 정리되어 있습니다.
 

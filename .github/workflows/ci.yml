@@ -40,6 +40,26 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # 프런트엔드(frontend/) 검증. 실패하면 test job이 실패해 needs: test인 ARM64 이미지 build로 넘어가지 않는다.
+      # 모든 테스트는 모의 fetch만 사용하며 백엔드·DB에 요청하지 않는다.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend install
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend test
+        working-directory: frontend
+        run: npm test -- --run
+
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build
+
       - name: Gradle wrapper validation
         uses: gradle/actions/wrapper-validation@v4
 
