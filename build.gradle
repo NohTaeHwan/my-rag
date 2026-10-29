@@ -35,6 +35,56 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+// 프런트엔드 번들은 bootJar(BOOT-INF/classes/static/)와 bootRun(정적 경로 추가)에만 넣어 Spring Boot가 `/`에서 제공한다.
+// processResources에는 넣지 않는다 — test·Stop Hook·CI test는 Node·dist 없이 돈다.
+//   로컬: frontendBuild(npm ci && npm run build)가 소스 내용 해시를 입력으로 가져 소스 변경·삭제·되돌림 시 다시 빌드되고,
+//         bootJar는 그 출력(dist 내용)을 입력으로 가져 번들이 바뀌면 UP-TO-DATE/FROM-CACHE가 되지 않는다.
+//   Docker: Node 단계가 만든 dist를 `-PprebuiltFrontendDist=<경로>`로 넘겨 Java 단계에서 npm을 다시 돌리지 않는다.
+def prebuiltFrontendDist = providers.gradleProperty('prebuiltFrontendDist')
+
+def frontendBuild = tasks.register('frontendBuild', Exec) {
+    group = 'build'
+    description = 'frontend/에서 npm ci && npm run build로 dist를 만든다(bootJar·bootRun 전용).'
+    workingDir 'frontend'
+    commandLine 'sh', '-c', 'npm ci && npm run build'
+    inputs.files(fileTree('frontend') {
+        include 'src/**', 'index.html', 'package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts'
+    }).withPropertyName('frontendSources').withPathSensitivity(PathSensitivity.RELATIVE)
+    outputs.dir('frontend/dist')
+}
+
+def frontendStatic = prebuiltFrontendDist.present ? files(prebuiltFrontendDist.get()) : files(frontendBuild)
+
+// doLast: 만든 JAR의 index.html이 참조하는 /assets/* JS·CSS가 모두 JAR에 있는지 확인한다(번들 실행·렌더링 자체는 검증하지 않음).
+// UP-TO-DATE/FROM-CACHE면 건너뛰지만, 그때는 입력(번들 내용)이 이미 검증된 실행과 같다.
+tasks.named('bootJar') {
+    bootInf {
+        into('classes/static') {
+            from(frontendStatic)
+        }
+    }
+    doLast {
+        def prefix = 'BOOT-INF/classes/static/'
+        new java.util.zip.ZipFile(archiveFile.get().asFile).withCloseable { zip ->
+            def index = zip.getEntry(prefix + 'index.html')
+            if (index == null) {
+                throw new GradleException('bootJar: JAR에 static/index.html이 없다')
+            }
+            def refs = (zip.getInputStream(index).text =~ /(?:src|href)="\/(assets\/[^"]+)"/).collect { it[1] }
+            def missing = refs.findAll { zip.getEntry(prefix + it) == null }
+            if (!refs.any { it.endsWith('.js') } || !refs.any { it.endsWith('.css') } || missing) {
+                throw new GradleException("bootJar: index.html의 JS/CSS 참조가 JAR와 맞지 않는다 — 참조 ${refs}, 누락 ${missing}")
+            }
+        }
+    }
+}
+
+// bootRun: frontendBuild로 최신 dist를 만든 뒤 classpath:/static/에 더해 file:dist/도 정적 경로로 쓴다(`/` → index.html).
+tasks.named('bootRun') {
+    dependsOn frontendBuild
+    systemProperty 'spring.web.resources.static-locations', "classpath:/static/,file:${file('frontend/dist')}/"
+}
+
 // DB를 비우거나 쓰는 테스트는 tag로 분리해 기본 test에서 제외한다. 아래 isolated* task로만 실행한다.
 def isolatedDbTags = ['isolated-migration', 'isolated-integration']
 
